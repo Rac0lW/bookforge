@@ -1,0 +1,17 @@
+[package]
+name = "bookforge"
+version = "0.1.0"
+edition = "2024"
+description = "Turn image folders into Apple Books-friendly fixed-layout EPUBs"
+license = "Apache-2.0"
+repository = "https://github.com/Rac0lW/bookforge"
+readme = "README.md"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+dirs = "6"
+kamadak-exif = "0.6"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+zip = { version = "2.4", default-features = false }
+time = { version = "0.3", features = ["formatting"] }
