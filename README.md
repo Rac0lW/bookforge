@@ -24,6 +24,9 @@ bookforge ./pictures
 bookforge ./pictures -o ./books/comic.epub
 bookforge ./comic.zip -o ./books/comic.epub
 
+# macOS: generate and attempt to import into Books
+bookforge ./comic.zip -o ./books/comic.epub --books
+
 # Choose a filename on your desktop
 bookforge ./pictures -d -o comic.epub
 
@@ -49,6 +52,7 @@ CLI help and status messages are currently in Chinese.
 - **Parallel validation:** image decoding uses up to four CPU cores (when available), preserving page order and bounding peak memory. ZIP extraction and EPUB writing remain sequential.
 - **Concise output and progress:** normal runs show the sort choice, page count, cover and result; interactive terminals also show progress bars for extraction, validation and packaging. Progress is hidden when output is redirected.
 - **Read-only preview:** `--dry-run` validates images and shows their full order, cover, conversion markers and output path without creating or changing the output file. Time-based sorting also shows timestamp sources and UTC timestamps.
+- **macOS Books import:** `--books` asks macOS to open the completed EPUB in Books. On other systems the option fails before generating anything. With `--dry-run` it only previews; a launch failure leaves the EPUB intact. A successful launch does not guarantee that Books finished importing—check the Books library.
 
 Ordinary directories are scanned without recursion. HEIC and OCR are not supported. Page alternative text currently contains only page numbers, not image descriptions.
 

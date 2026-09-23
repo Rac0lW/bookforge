@@ -25,6 +25,7 @@ cargo run -- ./图片目录 -d -o 画集.epub
 cargo run -- ./图片目录 --sort auto --dry-run
 cargo run -- ./图片目录 --sort time -o ./按时间.epub
 cargo run -- ./漫画.zip -o ./漫画.epub
+cargo run -- ./漫画.zip -o ./漫画.epub --books # macOS：生成后尝试导入 Books
 cargo run -- ./漫画.zip --dry-run
 cargo test
 python3 scripts/smoke.py
@@ -36,6 +37,7 @@ open -a Books target/smoke/apple-books-sample.epub
 - 动态 WebP 明确报错，不静默取第一帧；预览会标记 `[WebP → PNG]`，同样检查动态和损坏文件。
 - 未指定 `-o` 或 `-d` 时，默认输出到系统桌面，名称为 `输入文件夹名称.epub` 或 `压缩包名称.epub`；`-o`／`--output` 指定输出文件名或路径（相对路径基于当前目录），没有扩展名时补 `.epub`，不覆盖已有文件。
 - `-d`／`--desktop` 使用系统桌面目录；与 `-o` 同用时只接受文件名，不接受目录路径。输出父目录必须已存在。
+- macOS 上 `--books` 在 EPUB 生成成功后调用系统 `open -a Books` 尝试导入；其他系统使用此选项会报错。`--dry-run --books` 只预览，不打开 Books。打开失败时 EPUB 仍保留；命令成功只代表已交给 Books，是否导入成功请在书库中确认。
 - 图片解码校验最多使用 4 个 CPU 核心并行处理（受机器可用核心数限制），减少多图输入的等待；ZIP 解压与 EPUB 写入仍顺序执行。正常运行只显示排序、页数、封面与生成结果；交互式终端在解压、校验和生成时显示进度条（重定向输出时不显示）。`--dry-run` 仍显示完整顺序、首图封面、输出路径，不创建或修改输出文件；时间排序还显示各图的时间来源和 UTC 时间。
 - 空目录、损坏图片或写入错误会导致失败；写入失败尝试删除不完整输出。
 - 暂不支持 HEIC、递归目录或图片文字识别。页面替代文本目前只有页码，不能替代图片内容描述。

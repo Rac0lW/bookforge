@@ -1,5 +1,7 @@
 use chrono::{Local, NaiveDate, NaiveDateTime, TimeZone};
 use clap::{Parser, ValueEnum};
+#[cfg(target_os = "macos")]
+use std::process::Command;
 use std::{
     cmp::Ordering,
     collections::HashSet,
@@ -39,6 +41,9 @@ struct Args {
     /// 输出到系统桌面目录（未指定 --output 时默认启用）
     #[arg(short, long)]
     desktop: bool,
+    /// 生成后在 macOS 中尝试用 Books 打开 EPUB 并导入书库
+    #[arg(long)]
+    books: bool,
     /// auto 优先统一序号，否则尝试时间；name 为自然排序；time 优先 EXIF 拍摄时间
     #[arg(long, value_enum, default_value = "auto")]
     sort: Sort,
@@ -537,6 +542,9 @@ fn package(file: &mut File, title: &str, pictures: &[Picture]) -> Result<()> {
 
 fn run() -> Result<()> {
     let args = Args::parse();
+    if args.books && !cfg!(target_os = "macos") {
+        return Err("--books 仅支持 macOS".into());
+    }
     let directory = args.directory.canonicalize()?;
     let archive = directory.is_file();
     if archive
@@ -615,6 +623,9 @@ fn run() -> Result<()> {
             );
         }
         println!("输出：{}", output.display());
+        if args.books {
+            println!("--books：生成后将尝试用 Books 打开");
+        }
         println!("仅预览，未写入文件。");
         return Ok(());
     }
@@ -640,6 +651,22 @@ fn run() -> Result<()> {
         return Err(error);
     }
     println!("已生成：{}（{} 页）", output.display(), pictures.len());
+    #[cfg(target_os = "macos")]
+    if args.books {
+        let status = Command::new("/usr/bin/open")
+            .arg("-a")
+            .arg("Books")
+            .arg(output.canonicalize()?)
+            .status()?;
+        if !status.success() {
+            return Err(format!(
+                "Books 打开失败（{status}）；EPUB 已保留：{}",
+                output.display()
+            )
+            .into());
+        }
+        println!("已交给 Books 打开，请在 Books 中确认导入。");
+    }
     Ok(())
 }
 
@@ -681,6 +708,11 @@ mod tests {
         ])
         .unwrap();
         assert!(args.desktop && args.dry_run);
+        assert!(
+            Args::try_parse_from(["bookforge", "images", "--books", "--dry-run"])
+                .unwrap()
+                .books
+        );
         assert_eq!(args.sort, Sort::Time);
         assert!(Args::try_parse_from(["bookforge", "images", "--sort", "guess"]).is_err());
         assert!(Args::try_parse_from(["bookforge", "images", "-o"]).is_err());

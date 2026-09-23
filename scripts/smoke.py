@@ -4,6 +4,7 @@ import os
 import pathlib
 import struct
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 import zipfile
 import zlib
@@ -78,6 +79,13 @@ preview_output.unlink(missing_ok=True)
 text, order = preview(IMAGES, "-o", str(preview_output))
 assert "auto → name" in text and order == ["1.png", "2.png", "10.png"]
 assert not preview_output.exists()
+if sys.platform == "darwin":
+    text, _ = preview(IMAGES, "-o", str(preview_output), "--books")
+    assert "生成后将尝试用 Books 打开" in text and not preview_output.exists()
+else:
+    result = subprocess.run([str(BINARY), str(IMAGES), "--books", "-o", str(preview_output)],
+                            capture_output=True, text=True)
+    assert result.returncode != 0 and "仅支持 macOS" in result.stderr and not preview_output.exists()
 assert preview(IMAGES, "--sort", "time")[1] == ["10.png", "2.png", "1.png"]
 assert preview(IMAGES, "--sort", "name")[1] == ["1.png", "2.png", "10.png"]
 # Preview never truncates an existing output.
