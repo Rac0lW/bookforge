@@ -13,5 +13,5 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "6"
 kamadak-exif = "0.6"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
-zip = { version = "2.4", default-features = false }
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 time = { version = "0.3", features = ["formatting"] }

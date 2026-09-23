@@ -1,15 +1,20 @@
-use chrono::{Local, NaiveDateTime, TimeZone};
+use chrono::{Local, NaiveDate, NaiveDateTime, TimeZone};
 use clap::{Parser, ValueEnum};
 use std::{
     cmp::Ordering,
     collections::HashSet,
     error::Error,
     fs::{self, File, OpenOptions},
-    io::{self, BufReader, Write},
+    io::{self, BufReader, IsTerminal, Read, Write},
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicUsize, Ordering as AtomicOrdering},
+        mpsc,
+    },
+    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
-use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
+use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -23,10 +28,10 @@ enum Sort {
 #[derive(Parser)]
 #[command(
     version,
-    about = "将 JPEG/PNG/静态 WebP 图片目录转换为 Apple Books 固定版式 EPUB"
+    about = "将图片目录或 ZIP 压缩包转换为 Apple Books 固定版式 EPUB"
 )]
 struct Args {
-    /// 图片目录（不递归）
+    /// 图片目录（不递归）或 ZIP 压缩包（包含子目录）
     directory: PathBuf,
     /// 输出文件名或路径；与 --desktop 同用时只能是文件名
     #[arg(short, long)]
@@ -173,14 +178,22 @@ fn picture_time(path: &Path) -> Result<(SystemTime, bool)> {
     Ok((fs::metadata(path)?.modified()?, false))
 }
 
-fn sort_pictures(pictures: &mut [Picture], sort: Sort) -> Result<String> {
+fn sort_pictures(
+    pictures: &mut [Picture],
+    sort: Sort,
+    root: &Path,
+    archive: bool,
+) -> Result<String> {
     pictures.sort_by(|a, b| {
-        let an = a.path.file_name().unwrap().to_string_lossy();
-        let bn = b.path.file_name().unwrap().to_string_lossy();
+        let an = a.path.strip_prefix(root).unwrap().to_string_lossy();
+        let bn = b.path.strip_prefix(root).unwrap().to_string_lossy();
         natural_cmp(&an, &bn).then_with(|| a.path.cmp(&b.path))
     });
     if sort == Sort::Name {
         return Ok("name：文件名自然排序".into());
+    }
+    if sort == Sort::Auto && archive {
+        return Ok("auto → name：压缩包按内部路径自然排序（时间戳可能不可靠）".into());
     }
     if sort == Sort::Auto && (pictures.len() < 2 || numbered_sequence(pictures)) {
         return Ok("auto → name：单张图片或统一且不重复的文件名序号".into());
@@ -230,47 +243,212 @@ fn decode_picture(path: &Path) -> Result<(image::DynamicImage, image::ImageForma
     Ok((decoded, format))
 }
 
-fn pictures(directory: &Path) -> Result<Vec<Picture>> {
+fn is_picture(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        matches!(
+            e.to_ascii_lowercase().as_str(),
+            "jpg" | "jpeg" | "png" | "webp"
+        )
+    })
+}
+
+fn directory_paths(directory: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
-        if !entry.file_type()?.is_file() {
+        if entry.file_type()?.is_file() && is_picture(&entry.path()) {
+            paths.push(entry.path());
+        }
+    }
+    Ok(paths)
+}
+
+struct Extracted(PathBuf);
+
+impl Drop for Extracted {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_dir_all(&self.0) {
+            eprintln!("无法清理临时图片 {}: {error}", self.0.display());
+        }
+    }
+}
+
+fn extract(archive: &Path, show_progress: bool) -> Result<(Extracted, Vec<PathBuf>)> {
+    let mut zip = ZipArchive::new(File::open(archive)?)?;
+    let root = loop {
+        let candidate = std::env::temp_dir().join(format!(
+            "bookforge-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        match fs::create_dir(&candidate) {
+            Ok(()) => break Extracted(candidate),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    };
+    let mut paths = Vec::new();
+    let mut total = 0u64;
+    let fallback_time = fs::metadata(archive)?.modified()?;
+    let entries = zip.len();
+    if show_progress && entries > 0 {
+        progress("解压", 0, entries);
+    }
+    for i in 0..entries {
+        let mut entry = zip.by_index(i)?;
+        if entry.is_dir() || !is_picture(Path::new(entry.name())) {
+            if show_progress {
+                progress("解压", i + 1, entries);
+            }
             continue;
         }
-        let path = entry.path();
-        let extension = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        if matches!(extension.as_str(), "jpg" | "jpeg" | "png" | "webp") {
-            paths.push(path);
+        let relative = entry.enclosed_name().ok_or("ZIP 中存在不安全的图片路径")?;
+        if entry
+            .unix_mode()
+            .is_some_and(|mode| mode & 0o170000 == 0o120000)
+        {
+            return Err("ZIP 中不能包含图片符号链接".into());
+        }
+        // ponytail: 512 MiB/image and 2 GiB/book cap decompression bombs; raise for larger books.
+        if entry.size() > 512 * 1024 * 1024 || total + entry.size() > 2 * 1024 * 1024 * 1024 {
+            return Err(format!("ZIP 图片过大：{}", entry.name()).into());
+        }
+        let path = root.0.join(relative);
+        fs::create_dir_all(path.parent().unwrap())?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        let copied = io::copy(&mut entry.by_ref().take(512 * 1024 * 1024 + 1), &mut file)?;
+        total += copied;
+        if total > 2 * 1024 * 1024 * 1024 {
+            return Err("ZIP 图片总大小超过 2 GiB".into());
+        }
+        let modified = entry
+            .last_modified()
+            .and_then(|date| {
+                NaiveDate::from_ymd_opt(date.year().into(), date.month().into(), date.day().into())
+                    .and_then(|day| {
+                        day.and_hms_opt(
+                            date.hour().into(),
+                            date.minute().into(),
+                            date.second().into(),
+                        )
+                    })
+                    .and_then(|local| Local.from_local_datetime(&local).single())
+                    .map(SystemTime::from)
+            })
+            .unwrap_or(fallback_time);
+        file.set_modified(modified)?;
+        paths.push(path);
+        if show_progress {
+            progress("解压", i + 1, entries);
         }
     }
-    if paths.is_empty() {
-        return Err("目录中没有 JPEG、PNG 或 WebP 图片".into());
+    Ok((root, paths))
+}
+
+fn progress_bar(done: usize, total: usize) -> String {
+    let filled = done * 20 / total;
+    format!(
+        "[{}{}] {done}/{total}",
+        "#".repeat(filled),
+        "-".repeat(20 - filled)
+    )
+}
+
+fn progress(stage: &str, done: usize, total: usize) {
+    if io::stderr().is_terminal() {
+        eprint!("\r{stage} {}", progress_bar(done, total));
+        let _ = io::stderr().flush();
     }
-    paths
-        .into_iter()
-        .map(|path| {
-            // Validate before creating output; JPEG/PNG retain their original bytes.
-            let (decoded, format) = decode_picture(&path)?;
-            let (extension, media_type) = match format {
-                image::ImageFormat::Jpeg => ("jpg", "image/jpeg"),
-                image::ImageFormat::Png | image::ImageFormat::WebP => ("png", "image/png"),
-                _ => return Err(format!("不支持的图片格式：{}", path.display()).into()),
-            };
-            Ok(Picture {
-                width: decoded.width(),
-                height: decoded.height(),
-                convert_png: format == image::ImageFormat::WebP,
-                path,
-                extension,
-                media_type,
-                timestamp: None,
+}
+
+fn progress_end() {
+    if io::stderr().is_terminal() {
+        eprintln!();
+    }
+}
+
+fn picture(path: PathBuf) -> Result<Picture> {
+    // Validate before creating output; JPEG/PNG retain their original bytes.
+    let (decoded, format) = decode_picture(&path)?;
+    let (extension, media_type) = match format {
+        image::ImageFormat::Jpeg => ("jpg", "image/jpeg"),
+        image::ImageFormat::Png | image::ImageFormat::WebP => ("png", "image/png"),
+        _ => return Err(format!("不支持的图片格式：{}", path.display()).into()),
+    };
+    Ok(Picture {
+        width: decoded.width(),
+        height: decoded.height(),
+        convert_png: format == image::ImageFormat::WebP,
+        path,
+        extension,
+        media_type,
+        timestamp: None,
+    })
+}
+
+fn pictures(paths: Vec<PathBuf>, show_progress: bool) -> Result<Vec<Picture>> {
+    if paths.is_empty() {
+        return Err("输入中没有 JPEG、PNG 或 WebP 图片".into());
+    }
+    let total = paths.len();
+    if show_progress {
+        progress("校验", 0, total);
+    }
+    // ponytail: cap concurrent full-image decodes at 4 to bound peak memory; tune if pages are small.
+    let workers = thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(total)
+        .min(4);
+    if workers == 1 {
+        return paths
+            .into_iter()
+            .enumerate()
+            .map(|(i, path)| {
+                let result = picture(path)?;
+                if show_progress {
+                    progress("校验", i + 1, total);
+                }
+                Ok(result)
             })
-        })
-        .collect()
+            .collect();
+    }
+    let next = AtomicUsize::new(0);
+    let (tx, rx) = mpsc::channel();
+    thread::scope(|scope| {
+        for _ in 0..workers {
+            let tx = tx.clone();
+            let paths = &paths;
+            let next = &next;
+            scope.spawn(move || {
+                loop {
+                    let i = next.fetch_add(1, AtomicOrdering::Relaxed);
+                    if i >= paths.len() {
+                        break;
+                    }
+                    let result = picture(paths[i].clone()).map_err(|error| error.to_string());
+                    if tx.send((i, result)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(tx);
+        let mut ordered: Vec<Option<std::result::Result<Picture, String>>> =
+            (0..total).map(|_| None).collect();
+        for (done, (i, result)) in rx.into_iter().enumerate() {
+            ordered[i] = Some(result);
+            if show_progress {
+                progress("校验", done + 1, total);
+            }
+        }
+        ordered
+            .into_iter()
+            .map(|result| result.unwrap().map_err(Into::into))
+            .collect()
+    })
 }
 
 fn add(zip: &mut ZipWriter<&mut File>, name: &str, content: &str) -> Result<()> {
@@ -297,6 +475,7 @@ fn package(file: &mut File, title: &str, pictures: &[Picture]) -> Result<()> {
     );
     let mut spine = String::new();
     let mut toc = String::new();
+    progress("生成", 0, pictures.len());
     for (index, picture) in pictures.iter().enumerate() {
         let n = index + 1;
         let image_name = format!("images/{n}.{}", picture.extension);
@@ -330,6 +509,7 @@ fn package(file: &mut File, title: &str, pictures: &[Picture]) -> Result<()> {
         } else {
             io::copy(&mut File::open(&picture.path)?, &mut zip)?;
         }
+        progress("生成", n, pictures.len());
     }
     add(
         &mut zip,
@@ -358,47 +538,91 @@ fn package(file: &mut File, title: &str, pictures: &[Picture]) -> Result<()> {
 fn run() -> Result<()> {
     let args = Args::parse();
     let directory = args.directory.canonicalize()?;
-    let title = directory
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("book");
+    let archive = directory.is_file();
+    if archive
+        && !directory
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+    {
+        return Err("只支持 ZIP 压缩包".into());
+    }
+    let title = if archive {
+        directory.file_stem()
+    } else {
+        directory.file_name()
+    }
+    .and_then(|s| s.to_str())
+    .unwrap_or("book");
     let desktop = if args.desktop || args.output.is_none() {
         Some(dirs::desktop_dir().ok_or("无法定位系统桌面目录，请使用 --output 指定路径")?)
     } else {
         None
     };
     let output = output_path(title, args.output.as_deref(), desktop.as_deref())?;
-    let mut pictures = pictures(&directory)?;
-    println!("排序：{}", sort_pictures(&mut pictures, args.sort)?);
-    for (i, picture) in pictures.iter().enumerate() {
-        let timestamp = picture
-            .timestamp
-            .map(|(t, exif)| {
-                format!(
-                    " [{} {}]",
-                    if exif { "EXIF" } else { "mtime" },
-                    chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()
-                )
-            })
-            .unwrap_or_default();
-        println!(
-            "{}: {}{}{}{}",
-            i + 1,
-            picture.path.display(),
-            if i == 0 { " [封面]" } else { "" },
-            if picture.convert_png {
-                " [WebP → PNG]"
-            } else {
-                ""
-            },
-            timestamp
-        );
+    let (extracted, paths) = if archive {
+        let extracted = extract(&directory, !args.dry_run);
+        if !args.dry_run {
+            progress_end();
+        }
+        let (temp, paths) = extracted?;
+        (Some(temp), paths)
+    } else {
+        (None, directory_paths(&directory)?)
+    };
+    let root = extracted
+        .as_ref()
+        .map_or(directory.as_path(), |temp| temp.0.as_path());
+    let validated = pictures(paths, !args.dry_run);
+    if !args.dry_run {
+        progress_end();
     }
-    println!("输出：{}", output.display());
+    let mut pictures = validated?;
+    println!(
+        "排序：{}",
+        sort_pictures(&mut pictures, args.sort, root, archive)?
+    );
     if args.dry_run {
+        for (i, picture) in pictures.iter().enumerate() {
+            let timestamp = picture
+                .timestamp
+                .map(|(t, exif)| {
+                    format!(
+                        " [{} {}]",
+                        if exif { "EXIF" } else { "mtime" },
+                        chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()
+                    )
+                })
+                .unwrap_or_default();
+            println!(
+                "{}: {}{}{}{}",
+                i + 1,
+                if archive {
+                    format!(
+                        "{}!{}",
+                        directory.display(),
+                        picture.path.strip_prefix(root)?.display()
+                    )
+                } else {
+                    picture.path.display().to_string()
+                },
+                if i == 0 { " [封面]" } else { "" },
+                if picture.convert_png {
+                    " [WebP → PNG]"
+                } else {
+                    ""
+                },
+                timestamp
+            );
+        }
+        println!("输出：{}", output.display());
         println!("仅预览，未写入文件。");
         return Ok(());
     }
+    println!(
+        "{} 页，封面：{}",
+        pictures.len(),
+        pictures[0].path.strip_prefix(root)?.display()
+    );
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -408,6 +632,7 @@ fn run() -> Result<()> {
         Ok(())
     });
     drop(file);
+    progress_end();
     if let Err(error) = result {
         if let Err(cleanup) = fs::remove_file(&output) {
             eprintln!("无法删除不完整输出 {}: {cleanup}", output.display());
@@ -438,6 +663,9 @@ mod tests {
             Ordering::Less
         );
         assert_eq!(escape("A&B<\"'>"), "A&amp;B&lt;&quot;&apos;&gt;");
+        assert_eq!(progress_bar(0, 2), "[--------------------] 0/2");
+        assert_eq!(progress_bar(1, 2), "[##########----------] 1/2");
+        assert_eq!(progress_bar(2, 2), "[####################] 2/2");
     }
 
     #[test]

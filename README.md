@@ -1,6 +1,6 @@
 # bookforge
 
-Turn a folder of images into a fixed-layout EPUB 3 book, built with Apple Books in mind.
+Turn a folder or ZIP archive of images into a fixed-layout EPUB 3 book, built with Apple Books in mind.
 
 [简体中文](README.zh-CN.md)
 
@@ -22,6 +22,7 @@ bookforge ./pictures
 
 # Choose an output path
 bookforge ./pictures -o ./books/comic.epub
+bookforge ./comic.zip -o ./books/comic.epub
 
 # Choose a filename on your desktop
 bookforge ./pictures -d -o comic.epub
@@ -44,15 +45,18 @@ CLI help and status messages are currently in Chinese.
 - **JPEG, PNG and static WebP:** extensions are case-insensitive. JPEG/PNG bytes are preserved; WebP is converted to PNG, preserving decoded pixels and transparency. Conversion may increase file size. Source files are never modified.
 - **Explicit failures:** animated WebP and damaged images are rejected rather than silently skipped. Empty image folders also fail.
 - **Safe output:** existing files are never overwritten. Failed writes attempt to remove the incomplete output.
-- **Read-only preview:** `--dry-run` validates images and shows their order, cover, conversion markers and output path without creating or changing the output file. Time-based sorting also shows timestamp sources and UTC timestamps.
+- **ZIP input:** extracts JPEG, PNG and static WebP images (including nested folders) to a temporary directory; non-image files are ignored. Auto sorting uses natural order of full paths inside ZIP; explicit `--sort time` prefers EXIF then ZIP entry timestamps (or archive mtime if missing). Temporary files are cleaned up; limits are 512 MiB per image and 2 GiB total. Other archive formats are not supported.
+- **Parallel validation:** image decoding uses up to four CPU cores (when available), preserving page order and bounding peak memory. ZIP extraction and EPUB writing remain sequential.
+- **Concise output and progress:** normal runs show the sort choice, page count, cover and result; interactive terminals also show progress bars for extraction, validation and packaging. Progress is hidden when output is redirected.
+- **Read-only preview:** `--dry-run` validates images and shows their full order, cover, conversion markers and output path without creating or changing the output file. Time-based sorting also shows timestamp sources and UTC timestamps.
 
-Only the specified directory is scanned, without recursion. HEIC and OCR are not supported. Page alternative text currently contains only page numbers, not image descriptions.
+Ordinary directories are scanned without recursion. HEIC and OCR are not supported. Page alternative text currently contains only page numbers, not image descriptions.
 
 ### Output rules
 
 | Options | Destination |
 | --- | --- |
-| Neither `-o` nor `-d` | System desktop, named `<folder-name>.epub` |
+| Neither `-o` nor `-d` | System desktop, named `<folder-name>.epub` or `<archive-name>.epub` |
 | `-o filename` | Current working directory |
 | `-o path/to/filename` | The specified path |
 | `-d` | System desktop, named `<folder-name>.epub` |
