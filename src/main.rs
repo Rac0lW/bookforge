@@ -47,6 +47,12 @@ struct Args {
     /// auto 优先统一序号，否则尝试时间；name 为自然排序；time 优先 EXIF 拍摄时间
     #[arg(long, value_enum, default_value = "auto")]
     sort: Sort,
+    /// 从右向左翻页（日漫）；覆盖标题自动判断
+    #[arg(long, conflicts_with = "l2r")]
+    r2l: bool,
+    /// 从左向右翻页；覆盖标题自动判断
+    #[arg(long)]
+    l2r: bool,
     /// 显示顺序、封面和输出路径，不写文件
     #[arg(long)]
     dry_run: bool,
@@ -69,6 +75,13 @@ fn output_path(title: &str, output: Option<&Path>, desktop: Option<&Path>) -> Re
         output.set_extension("epub");
     }
     Ok(output)
+}
+
+fn japanese_title(title: &str) -> bool {
+    // Kanji alone cannot distinguish Japanese from Chinese; flags handle ambiguous titles.
+    title
+        .chars()
+        .any(|c| matches!(c, '\u{3040}'..='\u{30ff}' | '\u{ff66}'..='\u{ff9f}'))
 }
 
 fn escape(value: &str) -> String {
@@ -465,7 +478,7 @@ fn add(zip: &mut ZipWriter<&mut File>, name: &str, content: &str) -> Result<()> 
     Ok(())
 }
 
-fn package(file: &mut File, title: &str, pictures: &[Picture]) -> Result<()> {
+fn package(file: &mut File, title: &str, pictures: &[Picture], rtl: bool) -> Result<()> {
     let mut zip = ZipWriter::new(file);
     add(&mut zip, "mimetype", "application/epub+zip")?;
     add(
@@ -480,6 +493,9 @@ fn package(file: &mut File, title: &str, pictures: &[Picture]) -> Result<()> {
     );
     let mut spine = String::new();
     let mut toc = String::new();
+    let first_side = if rtl { "left" } else { "right" };
+    let next_side = if rtl { "right" } else { "left" };
+    let mut side = first_side;
     progress("生成", 0, pictures.len());
     for (index, picture) in pictures.iter().enumerate() {
         let n = index + 1;
@@ -490,7 +506,22 @@ fn package(file: &mut File, title: &str, pictures: &[Picture]) -> Result<()> {
             ""
         };
         manifest.push_str(&format!(r#"<item id="image{n}" href="{image_name}" media-type="{}"{cover}/><item id="page{n}" href="pages/{n}.xhtml" media-type="application/xhtml+xml"/>"#, picture.media_type));
-        spine.push_str(&format!(r#"<itemref idref="page{n}"/>"#));
+        if picture.width >= picture.height {
+            // A landscape image may already be a full spread: keep it intact and centered.
+            spine.push_str(&format!(
+                r#"<itemref idref="page{n}" properties="rendition:spread-none"/>"#
+            ));
+            side = next_side;
+        } else {
+            spine.push_str(&format!(
+                r#"<itemref idref="page{n}" properties="page-spread-{side}"/>"#
+            ));
+            side = if side == first_side {
+                next_side
+            } else {
+                first_side
+            };
+        }
         toc.push_str(&format!(
             r#"<li><a href="pages/{n}.xhtml">第 {n} 页</a></li>"#
         ));
@@ -528,12 +559,13 @@ fn package(file: &mut File, title: &str, pictures: &[Picture]) -> Result<()> {
     let modified = time::OffsetDateTime::now_utc()
         .replace_nanosecond(0)?
         .format(&time::format_description::well_known::Rfc3339)?;
+    let direction = if rtl { "rtl" } else { "ltr" };
     add(
         &mut zip,
         "EPUB/package.opf",
         &format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id" prefix="rendition: http://www.idpf.org/vocab/rendition/#"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="book-id">urn:bookforge:{identifier}</dc:identifier><dc:title>{title}</dc:title><dc:language>zh</dc:language><meta property="dcterms:modified">{modified}</meta><meta property="rendition:layout">pre-paginated</meta><meta property="rendition:spread">none</meta></metadata><manifest>{manifest}</manifest><spine page-progression-direction="ltr">{spine}</spine></package>"#
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id" prefix="rendition: http://www.idpf.org/vocab/rendition/#"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="book-id">urn:bookforge:{identifier}</dc:identifier><dc:title>{title}</dc:title><dc:language>zh</dc:language><meta property="dcterms:modified">{modified}</meta><meta property="rendition:layout">pre-paginated</meta><meta property="rendition:spread">landscape</meta></metadata><manifest>{manifest}</manifest><spine page-progression-direction="{direction}">{spine}</spine></package>"#
         ),
     )?;
     zip.finish()?;
@@ -561,6 +593,7 @@ fn run() -> Result<()> {
     }
     .and_then(|s| s.to_str())
     .unwrap_or("book");
+    let rtl = args.r2l || (!args.l2r && japanese_title(title));
     let desktop = if args.desktop || args.output.is_none() {
         Some(dirs::desktop_dir().ok_or("无法定位系统桌面目录，请使用 --output 指定路径")?)
     } else {
@@ -588,6 +621,10 @@ fn run() -> Result<()> {
     println!(
         "排序：{}",
         sort_pictures(&mut pictures, args.sort, root, archive)?
+    );
+    println!(
+        "阅读方向：{}；横屏双页、竖屏单页",
+        if rtl { "从右往左" } else { "从左往右" }
     );
     if args.dry_run {
         for (i, picture) in pictures.iter().enumerate() {
@@ -638,7 +675,7 @@ fn run() -> Result<()> {
         .write(true)
         .create_new(true)
         .open(&output)?;
-    let result = package(&mut file, title, &pictures).and_then(|_| {
+    let result = package(&mut file, title, &pictures, rtl).and_then(|_| {
         file.sync_all()?;
         Ok(())
     });
@@ -714,6 +751,10 @@ mod tests {
                 .books
         );
         assert_eq!(args.sort, Sort::Time);
+        assert!(japanese_title("まんが"));
+        assert!(japanese_title("ｶﾀｶﾅ.zip"));
+        assert!(!japanese_title("漫画"));
+        assert!(!japanese_title("Comic"));
         assert!(Args::try_parse_from(["bookforge", "images", "--sort", "guess"]).is_err());
         assert!(Args::try_parse_from(["bookforge", "images", "-o"]).is_err());
         let desktop = Path::new("/test/Desktop");

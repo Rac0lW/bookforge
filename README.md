@@ -37,6 +37,10 @@ bookforge ./pictures --sort auto --dry-run
 bookforge ./pictures --sort name
 bookforge ./pictures --sort time
 
+# Override page direction (otherwise detected from kana in the folder/ZIP name)
+bookforge ./comic.zip --r2l
+bookforge ./comic.zip --l2r
+
 bookforge --help
 ```
 
@@ -44,7 +48,7 @@ CLI help and status messages are currently in Chinese.
 
 ## Features
 
-- **Apple Books first:** EPUB 3 fixed layout, one image per page, using the image's dimensions and a single-page spread. The first image is both the cover and the first content page.
+- **Apple Books first:** EPUB 3 fixed layout, one image per page, using the image's dimensions. Requests one page in portrait, facing pages in landscape; wide or square images stay centered as single spreads. The first image is both the cover and the first content page. Defaults to right-to-left when the folder/ZIP title contains Japanese kana; use `--r2l` or `--l2r` to override (kanji-only titles are ambiguous and default to left-to-right). Apple Books does not document the EPUB `landscape` spread value, so verify the behavior on your device.
 - **JPEG, PNG and static WebP:** extensions are case-insensitive. JPEG/PNG bytes are preserved; WebP is converted to PNG, preserving decoded pixels and transparency. Conversion may increase file size. Source files are never modified.
 - **Explicit failures:** animated WebP and damaged images are rejected rather than silently skipped. Empty image folders also fail.
 - **Safe output:** existing files are never overwritten. Failed writes attempt to remove the incomplete output.
@@ -103,7 +107,7 @@ Generated samples have passed [EPUBCheck 5.3.0](https://github.com/w3c/epubcheck
 java -jar /path/to/epubcheck.jar target/smoke/apple-books-sample.epub
 ```
 
-The initial sample was reported to display correctly in Apple Books. WebP sample rendering and iPhone/iPad rotation and zoom still need separate manual verification. The smoke sample should show a red portrait, green landscape and blue square, with all four black borders visible and the red page as its cover.
+The initial single-page sample was reported to display correctly in Apple Books. The new spread layout, WebP sample rendering and iPhone/iPad rotation and zoom still need separate manual verification. The smoke sample should show a red portrait, green landscape and blue square, with all four black borders visible and the red page as its cover.
 
 ## References
 
