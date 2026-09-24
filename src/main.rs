@@ -629,12 +629,18 @@ fn package(file: &mut File, title: &str, pictures: &[Picture], rtl: bool) -> Res
         .replace_nanosecond(0)?
         .format(&time::format_description::well_known::Rfc3339)?;
     let direction = if rtl { "rtl" } else { "ltr" };
+    // Apple Books honors the book-level spread setting even when every item requests spread-none.
+    let spread = if pictures.iter().all(|p| p.width >= p.height) {
+        "none"
+    } else {
+        "landscape"
+    };
     add(
         &mut zip,
         "EPUB/package.opf",
         &format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id" prefix="rendition: http://www.idpf.org/vocab/rendition/#"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="book-id">urn:bookforge:{identifier}</dc:identifier><dc:title>{title}</dc:title><dc:language>zh</dc:language><meta property="dcterms:modified">{modified}</meta><meta property="rendition:layout">pre-paginated</meta><meta property="rendition:spread">landscape</meta></metadata><manifest>{manifest}</manifest><spine page-progression-direction="{direction}">{spine}</spine></package>"#
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id" prefix="rendition: http://www.idpf.org/vocab/rendition/#"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="book-id">urn:bookforge:{identifier}</dc:identifier><dc:title>{title}</dc:title><dc:language>zh</dc:language><meta property="dcterms:modified">{modified}</meta><meta property="rendition:layout">pre-paginated</meta><meta property="rendition:spread">{spread}</meta></metadata><manifest>{manifest}</manifest><spine page-progression-direction="{direction}">{spine}</spine></package>"#
         ),
     )?;
     zip.finish()?;
@@ -708,8 +714,13 @@ fn run() -> Result<()> {
         sort_pictures(&mut pictures, args.sort, root, archive)?
     );
     println!(
-        "阅读方向：{}；横屏双页、竖屏单页",
-        if rtl { "从右往左" } else { "从左往右" }
+        "阅读方向：{}；{}",
+        if rtl { "从右往左" } else { "从左往右" },
+        if pictures.iter().all(|p| p.width >= p.height) {
+            "全横图／方图单页"
+        } else {
+            "横屏双页、竖屏单页（横图／方图请求独页）"
+        }
     );
     if args.dry_run {
         for (i, picture) in pictures.iter().enumerate() {

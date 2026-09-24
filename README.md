@@ -49,7 +49,7 @@ CLI help and status messages are currently in Chinese.
 
 ## Features
 
-- **Apple Books first:** EPUB 3 fixed layout, one image per page, using the image's dimensions. Requests one page in portrait, facing pages in landscape; wide or square images stay centered as single spreads. The first image is both the cover and the first content page. Defaults to right-to-left when the folder/ZIP title contains Japanese kana; use `--r2l` or `--l2r` to override (kanji-only titles are ambiguous and default to left-to-right). Apple Books does not document the EPUB `landscape` spread value, so verify the behavior on your device.
+- **Apple Books first:** EPUB 3 fixed layout, one image per page, using the image's dimensions. All-wide/square books request one page per spread. Books with portrait images request facing pages in landscape, with wide/square pages individually requesting single spreads (Apple Books behavior for mixed books needs verification). The first image is both the cover and the first content page. Defaults to right-to-left when the folder/ZIP title contains Japanese kana; use `--r2l` or `--l2r` to override (kanji-only titles are ambiguous and default to left-to-right). Apple Books does not document the EPUB `landscape` spread value, so verify the behavior on your device.
 - **JPEG, PNG and static WebP:** extensions are case-insensitive. JPEG/PNG bytes are preserved; WebP is converted to PNG, preserving decoded pixels and transparency. Conversion may increase file size. Source files are never modified.
 - **Explicit failures:** animated WebP and damaged images are rejected rather than silently skipped. Empty image folders also fail.
 - **Safe output:** existing files are never overwritten. Failed writes attempt to remove the incomplete output.
