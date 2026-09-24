@@ -1,6 +1,5 @@
 use chrono::{Local, NaiveDate, NaiveDateTime, TimeZone};
 use clap::{Parser, ValueEnum};
-#[cfg(target_os = "macos")]
 use std::process::Command;
 use std::{
     cmp::Ordering,
@@ -30,10 +29,10 @@ enum Sort {
 #[derive(Parser)]
 #[command(
     version,
-    about = "将图片目录或 ZIP 压缩包转换为 Apple Books 固定版式 EPUB"
+    about = "将图片目录、ZIP 压缩包或链接转换为 Apple Books 固定版式 EPUB"
 )]
 struct Args {
-    /// 图片目录（不递归）或 ZIP 压缩包（包含子目录）
+    /// 图片目录、ZIP 压缩包或 HTTP(S) 图片链接
     directory: PathBuf,
     /// 输出文件名或路径；与 --desktop 同用时只能是文件名
     #[arg(short, long)]
@@ -283,6 +282,87 @@ fn directory_paths(directory: &Path) -> Result<Vec<PathBuf>> {
 
 struct Extracted(PathBuf);
 
+fn temporary_directory() -> Result<Extracted> {
+    loop {
+        let candidate = std::env::temp_dir().join(format!(
+            "bookforge-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        match fs::create_dir(&candidate) {
+            Ok(()) => return Ok(Extracted(candidate)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+}
+
+fn url_title(url: &str) -> String {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let name = path.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+    let name: String = name
+        .chars()
+        .filter(|c| {
+            !c.is_control() && !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+        })
+        .collect();
+    if name.is_empty() || name == "." || name == ".." || name.contains('@') {
+        "book".into()
+    } else {
+        name
+    }
+}
+
+fn ensure_gallery_dl() -> Result<()> {
+    match Command::new("gallery-dl").arg("--version").output() {
+        Ok(result) if result.status.success() => return Ok(()),
+        Ok(result) => return Err(format!("gallery-dl 无法运行（{}）", result.status).into()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("无法启动 gallery-dl：{error}").into()),
+    }
+    if !cfg!(target_os = "macos") || !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        return Err("未找到 gallery-dl；请先安装（macOS 可运行 brew install gallery-dl）".into());
+    }
+    eprint!("未找到 gallery-dl，是否使用 Homebrew 安装？[y/N] ");
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        return Err("已取消安装 gallery-dl".into());
+    }
+    let status = Command::new("brew")
+        .args(["install", "gallery-dl"])
+        .status()
+        .map_err(|e| format!("无法运行 brew：{e}；请手动安装 gallery-dl"))?;
+    if !status.success() {
+        return Err(format!("brew install gallery-dl 失败（{status}）").into());
+    }
+    if !Command::new("gallery-dl")
+        .arg("--version")
+        .status()?
+        .success()
+    {
+        return Err("安装后 gallery-dl 仍无法运行".into());
+    }
+    Ok(())
+}
+
+fn download(url: &str) -> Result<(Extracted, Vec<PathBuf>)> {
+    ensure_gallery_dl()?;
+    let temp = temporary_directory()?;
+    let status = Command::new("gallery-dl")
+        .arg("-D")
+        .arg(&temp.0)
+        .arg("--")
+        .arg(url)
+        .status()?;
+    if !status.success() {
+        return Err(format!("gallery-dl 下载失败（{status}）").into());
+    }
+    let paths = directory_paths(&temp.0)?;
+    Ok((temp, paths))
+}
+
 impl Drop for Extracted {
     fn drop(&mut self) {
         if let Err(error) = fs::remove_dir_all(&self.0) {
@@ -293,18 +373,7 @@ impl Drop for Extracted {
 
 fn extract(archive: &Path, show_progress: bool) -> Result<(Extracted, Vec<PathBuf>)> {
     let mut zip = ZipArchive::new(File::open(archive)?)?;
-    let root = loop {
-        let candidate = std::env::temp_dir().join(format!(
-            "bookforge-{}-{}",
-            std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-        ));
-        match fs::create_dir(&candidate) {
-            Ok(()) => break Extracted(candidate),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e.into()),
-        }
-    };
+    let root = temporary_directory()?;
     let mut paths = Vec::new();
     let mut total = 0u64;
     let fallback_time = fs::metadata(archive)?.modified()?;
@@ -577,8 +646,16 @@ fn run() -> Result<()> {
     if args.books && !cfg!(target_os = "macos") {
         return Err("--books 仅支持 macOS".into());
     }
-    let directory = args.directory.canonicalize()?;
-    let archive = directory.is_file();
+    let url = args
+        .directory
+        .to_str()
+        .filter(|s| s.starts_with("http://") || s.starts_with("https://"));
+    let directory = if url.is_some() {
+        args.directory.clone()
+    } else {
+        args.directory.canonicalize()?
+    };
+    let archive = url.is_none() && directory.is_file();
     if archive
         && !directory
             .extension()
@@ -586,21 +663,29 @@ fn run() -> Result<()> {
     {
         return Err("只支持 ZIP 压缩包".into());
     }
-    let title = if archive {
-        directory.file_stem()
+    let title = if let Some(url) = url {
+        url_title(url)
     } else {
-        directory.file_name()
-    }
-    .and_then(|s| s.to_str())
-    .unwrap_or("book");
-    let rtl = args.r2l || (!args.l2r && japanese_title(title));
+        (if archive {
+            directory.file_stem()
+        } else {
+            directory.file_name()
+        })
+        .and_then(|s| s.to_str())
+        .unwrap_or("book")
+        .to_string()
+    };
+    let rtl = args.r2l || (!args.l2r && japanese_title(&title));
     let desktop = if args.desktop || args.output.is_none() {
         Some(dirs::desktop_dir().ok_or("无法定位系统桌面目录，请使用 --output 指定路径")?)
     } else {
         None
     };
-    let output = output_path(title, args.output.as_deref(), desktop.as_deref())?;
-    let (extracted, paths) = if archive {
+    let output = output_path(&title, args.output.as_deref(), desktop.as_deref())?;
+    let (extracted, paths) = if let Some(url) = url {
+        let (temp, paths) = download(url)?;
+        (Some(temp), paths)
+    } else if archive {
         let extracted = extract(&directory, !args.dry_run);
         if !args.dry_run {
             progress_end();
@@ -647,6 +732,8 @@ fn run() -> Result<()> {
                         directory.display(),
                         picture.path.strip_prefix(root)?.display()
                     )
+                } else if url.is_some() {
+                    picture.path.strip_prefix(root)?.display().to_string()
                 } else {
                     picture.path.display().to_string()
                 },
@@ -675,7 +762,7 @@ fn run() -> Result<()> {
         .write(true)
         .create_new(true)
         .open(&output)?;
-    let result = package(&mut file, title, &pictures, rtl).and_then(|_| {
+    let result = package(&mut file, &title, &pictures, rtl).and_then(|_| {
         file.sync_all()?;
         Ok(())
     });

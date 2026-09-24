@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-图片文件夹或 ZIP 压缩包 → Apple Books 优先的 EPUB 3 固定版式原型。
+图片文件夹、ZIP 压缩包或图片链接 → Apple Books 优先的 EPUB 3 固定版式原型。
 
 ## 安装
 
@@ -27,6 +27,7 @@ cargo run -- ./图片目录 --sort time -o ./按时间.epub
 cargo run -- ./漫画.zip -o ./漫画.epub
 cargo run -- ./漫画.zip -o ./漫画.epub --books # macOS：生成后尝试导入 Books
 cargo run -- ./漫画.zip --dry-run
+cargo run -- 'https://example.org/album' -o ./画集.epub # 从链接下载后制作
 cargo run -- ./漫画.zip --r2l -o ./日漫.epub # 强制从右往左
 cargo run -- ./漫画.zip --l2r -o ./左翻.epub # 强制从左往右
 cargo test
@@ -34,10 +35,11 @@ python3 scripts/smoke.py
 open -a Books target/smoke/apple-books-sample.epub
 ```
 
+- HTTP(S) 链接使用 `gallery-dl` 下载到临时目录并在结束时清理；不支持的网站或没有可用图片时会报错。若未安装，macOS 交互终端会先询问是否运行 `brew install gallery-dl`；非交互环境或其他系统请自行安装。链接默认以 URL 最后一路径段命名，建议用 `-o` 指定书名；`--dry-run` 仍会下载图片，但不会创建 EPUB。
 - 支持图片目录或 ZIP（含子目录）中的 JPEG／PNG／静态 WebP（扩展名不区分大小写）；普通目录仍不递归。ZIP 中非图片文件会忽略，图片按内部路径自然排序；默认 `--sort auto` 对 ZIP 使用名称排序，`--sort time` 可按 EXIF／ZIP 条目时间排序（缺失时用压缩包修改时间）。解压到临时目录并在结束时清理；每张图片限 512 MiB，总计限 2 GiB。暂不支持其他压缩格式。
 - 一图一页，页面尺寸取原图尺寸；第一张图同时作为书架封面和正文第一页。EPUB 请求竖屏单页、横屏双页；横向或方形图片保持整页居中，不与相邻页配对。默认从左往右翻页；文件夹名或 ZIP 名含日文假名时默认从右往左，`--r2l`／`--l2r` 可覆盖。纯汉字无法可靠区分中文与日文，请手动指定。Apple Books 未明确列出 EPUB 的 `landscape` 双页值，具体效果须在设备上确认；可在阅读器里放大查看细字。JPEG／PNG 保留原始字节；WebP 自动转成 PNG 嵌入 EPUB，保留解码后的像素与透明度，不修改源文件，但输出体积可能增大。
 - 动态 WebP 明确报错，不静默取第一帧；预览会标记 `[WebP → PNG]`，同样检查动态和损坏文件。
-- 未指定 `-o` 或 `-d` 时，默认输出到系统桌面，名称为 `输入文件夹名称.epub` 或 `压缩包名称.epub`；`-o`／`--output` 指定输出文件名或路径（相对路径基于当前目录），没有扩展名时补 `.epub`，不覆盖已有文件。
+- 未指定 `-o` 或 `-d` 时，默认输出到系统桌面，名称为 `输入文件夹名称.epub`、`压缩包名称.epub` 或 `链接末段.epub`；`-o`／`--output` 指定输出文件名或路径（相对路径基于当前目录），没有扩展名时补 `.epub`，不覆盖已有文件。
 - `-d`／`--desktop` 使用系统桌面目录；与 `-o` 同用时只接受文件名，不接受目录路径。输出父目录必须已存在。
 - macOS 上 `--books` 在 EPUB 生成成功后调用系统 `open -a Books` 尝试导入；其他系统使用此选项会报错。`--dry-run --books` 只预览，不打开 Books。打开失败时 EPUB 仍保留；命令成功只代表已交给 Books，是否导入成功请在书库中确认。
 - 图片解码校验最多使用 4 个 CPU 核心并行处理（受机器可用核心数限制），减少多图输入的等待；ZIP 解压与 EPUB 写入仍顺序执行。正常运行只显示排序、页数、封面与生成结果；交互式终端在解压、校验和生成时显示进度条（重定向输出时不显示）。`--dry-run` 仍显示完整顺序、首图封面、输出路径，不创建或修改输出文件；时间排序还显示各图的时间来源和 UTC 时间。
