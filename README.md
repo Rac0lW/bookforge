@@ -20,6 +20,14 @@ cargo install --path .
 # Save to your desktop as pictures.epub
 bookforge ./pictures
 
+# Optional persistent defaults
+bookforge init
+bookforge open                           # open config with the default app
+bookforge config set books true          # macOS: open new EPUBs in Books
+bookforge config set output_dir ~/Books  # default destination (directory must exist)
+bookforge config set desktop true        # restore desktop default
+bookforge config set desktop false       # use current directory by default
+
 # Choose an output path
 bookforge ./pictures -o ./books/comic.epub
 bookforge ./comic.zip -o ./books/comic.epub
@@ -58,21 +66,23 @@ CLI help and status messages are currently in Chinese.
 - **Parallel validation:** image decoding uses up to four CPU cores (when available), preserving page order and bounding peak memory. ZIP extraction and EPUB writing remain sequential.
 - **Concise output and progress:** normal runs show the sort choice, page count, cover and result; interactive terminals also show progress bars for extraction, validation and packaging. Progress is hidden when output is redirected.
 - **Read-only preview:** `--dry-run` validates images and shows their full order, cover, conversion markers and output path without creating or changing the output file. Time-based sorting also shows timestamp sources and UTC timestamps.
-- **macOS Books import:** `--books` asks macOS to open the completed EPUB in Books. On other systems the option fails before generating anything. With `--dry-run` it only previews; a launch failure leaves the EPUB intact. A successful launch does not guarantee that Books finished importing—check the Books library.
+- **macOS Books import:** `--books` or `books = true` in the config asks macOS to open the completed EPUB in Books; `--no-books` disables that default for one run. On other systems enabling Books fails before generating anything. With `--dry-run` it only previews; a launch failure leaves the EPUB intact. A successful launch does not guarantee that Books finished importing—check the Books library.
 
 Ordinary directories are scanned without recursion. HEIC and OCR are not supported. Page alternative text currently contains only page numbers, not image descriptions.
 
-### Output rules
+### Configuration and output rules
+
+The optional `~/.config/bookforge/config.toml` uses `books = false` and `desktop = true` by default. `bookforge init` creates it without overwriting an existing file; `bookforge config set books true|false`, `config set desktop true|false`, and `config set output_dir PATH` create/update it. Setting `desktop` clears `output_dir`; setting `output_dir` disables the desktop default. Paths in the file may start with `~/`, and relative paths use the current working directory. The destination directory must exist. Invalid config is reported, not ignored.
 
 | Options | Destination |
 | --- | --- |
-| Neither `-o` nor `-d` | System desktop, named `<folder-name>.epub`, `<archive-name>.epub`, or `<last-URL-segment>.epub` |
+| Neither `-o` nor `-d` | Configured default destination (desktop unless changed), named `<folder-name>.epub`, `<archive-name>.epub`, or `<last-URL-segment>.epub` |
 | `-o filename` | Current working directory |
 | `-o path/to/filename` | The specified path |
 | `-d` | System desktop, named `<folder-name>.epub` |
 | `-d -o filename` | System desktop, with a custom filename |
 
-`-o` / `--output` appends `.epub` when no extension is supplied. With `-d` / `--desktop`, `-o` must be a filename, not a directory path. The output parent directory must already exist. If the system desktop cannot be located, use an explicit `-o` path.
+`-o` / `--output` overrides the configured destination and appends `.epub` when no extension is supplied. `-d` forces the desktop; with `-d` / `--desktop`, `-o` must be a filename, not a directory path. The output parent directory must already exist. If the system desktop cannot be located, use an explicit `-o` path.
 
 ### Sorting
 

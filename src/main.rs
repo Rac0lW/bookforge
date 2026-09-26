@@ -1,5 +1,6 @@
 use chrono::{Local, NaiveDate, NaiveDateTime, TimeZone};
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
+use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::{
     cmp::Ordering,
@@ -33,16 +34,21 @@ enum Sort {
 )]
 struct Args {
     /// 图片目录、ZIP 压缩包或 HTTP(S) 图片链接
-    directory: PathBuf,
+    directory: Option<PathBuf>,
+    #[command(subcommand)]
+    command: Option<ConfigCommand>,
     /// 输出文件名或路径；与 --desktop 同用时只能是文件名
     #[arg(short, long)]
     output: Option<PathBuf>,
-    /// 输出到系统桌面目录（未指定 --output 时默认启用）
+    /// 强制输出到系统桌面目录（默认位置可通过配置修改）
     #[arg(short, long)]
     desktop: bool,
     /// 生成后在 macOS 中尝试用 Books 打开 EPUB 并导入书库
-    #[arg(long)]
+    #[arg(long, conflicts_with = "no_books")]
     books: bool,
+    /// 本次不打开 Books（覆盖配置文件）
+    #[arg(long)]
+    no_books: bool,
     /// auto 优先统一序号，否则尝试时间；name 为自然排序；time 优先 EXIF 拍摄时间
     #[arg(long, value_enum, default_value = "auto")]
     sort: Sort,
@@ -55,6 +61,175 @@ struct Args {
     /// 显示顺序、封面和输出路径，不写文件
     #[arg(long)]
     dry_run: bool,
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    /// 创建默认配置文件（不会覆盖已有文件）
+    Init,
+    /// 使用系统默认应用打开配置文件
+    Open,
+    /// 修改配置
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// 设置 books、desktop 或 output_dir
+    Set { key: String, value: String },
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct Config {
+    books: bool,
+    // None retains the original desktop default.
+    desktop: Option<bool>,
+    output_dir: Option<PathBuf>,
+}
+
+impl Config {
+    fn load(path: &Path) -> Result<Self> {
+        match fs::read_to_string(path) {
+            Ok(text) => toml::from_str(&text)
+                .map_err(|e| format!("配置文件 {} 无效：{e}", path.display()).into()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(format!("读取配置文件 {} 失败：{e}", path.display()).into()),
+        }
+    }
+
+    fn set(&mut self, key: &str, value: &str) -> Result<()> {
+        match key {
+            "books" => self.books = value.parse().map_err(|_| "books 必须是 true 或 false")?,
+            "desktop" => {
+                let enabled = value.parse().map_err(|_| "desktop 必须是 true 或 false")?;
+                self.desktop = Some(enabled);
+                self.output_dir = None;
+            }
+            "output_dir" => {
+                if value.is_empty() {
+                    return Err("output_dir 不能为空".into());
+                }
+                self.output_dir = Some(PathBuf::from(value));
+                self.desktop = Some(false);
+            }
+            _ => return Err("未知配置项；可用：books、desktop、output_dir".into()),
+        }
+        Ok(())
+    }
+}
+
+fn config_path() -> Result<PathBuf> {
+    Ok(dirs::home_dir()
+        .ok_or("无法定位用户主目录")?
+        .join(".config/bookforge/config.toml"))
+}
+
+fn config_command(path: &Path, command: ConfigCommand) -> Result<()> {
+    match command {
+        ConfigCommand::Open => {
+            if !path.is_file() {
+                return Err(format!(
+                    "配置文件不存在：{}；请先运行 bookforge init",
+                    path.display()
+                )
+                .into());
+            }
+            #[cfg(target_os = "macos")]
+            let opener = "open";
+            #[cfg(target_os = "windows")]
+            let opener = "explorer";
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            let opener = "xdg-open";
+            let status = Command::new(opener).arg(path).status()?;
+            if !status.success() {
+                return Err(format!("无法用默认应用打开 {}（{status}）", path.display()).into());
+            }
+        }
+        ConfigCommand::Init => {
+            fs::create_dir_all(path.parent().unwrap())?;
+            let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
+                Ok(file) => file,
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                    return Err(format!(
+                        "配置已存在：{}；未覆盖，请使用 config set 修改",
+                        path.display()
+                    )
+                    .into());
+                }
+                Err(e) => return Err(e.into()),
+            };
+            if let Err(error) =
+                file.write_all(b"# bookforge defaults\nbooks = false\ndesktop = true\n")
+            {
+                let _ = fs::remove_file(path);
+                return Err(error.into());
+            }
+        }
+        ConfigCommand::Config {
+            action: ConfigAction::Set { key, value },
+        } => {
+            let mut config = Config::load(path)?;
+            config.set(&key, &value)?;
+            fs::create_dir_all(path.parent().unwrap())?;
+            // Write to a sibling first so a failed write cannot truncate the existing config.
+            let temp = path.with_extension(format!(
+                "toml.{}.{}.tmp",
+                std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+            ));
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)?;
+            let result = (|| -> Result<()> {
+                file.write_all(toml::to_string_pretty(&config)?.as_bytes())?;
+                file.sync_all()?;
+                fs::rename(&temp, path)?;
+                Ok(())
+            })();
+            if result.is_err() {
+                let _ = fs::remove_file(&temp);
+            }
+            result?;
+        }
+    }
+    println!("配置：{}", path.display());
+    Ok(())
+}
+
+fn configured_output(title: &str, args: &Args, config: &Config) -> Result<PathBuf> {
+    let desktop = if args.desktop
+        || (args.output.is_none() && config.output_dir.is_none() && config.desktop.unwrap_or(true))
+    {
+        Some(dirs::desktop_dir().ok_or("无法定位系统桌面目录，请使用 --output 指定路径")?)
+    } else {
+        None
+    };
+    let output = if !args.desktop && args.output.is_none() {
+        config
+            .output_dir
+            .as_ref()
+            .map(|dir| -> Result<PathBuf> {
+                let dir = if let Ok(suffix) = dir.strip_prefix("~") {
+                    dirs::home_dir().ok_or("无法定位用户主目录")?.join(suffix)
+                } else {
+                    dir.clone()
+                };
+                Ok(dir.join(format!("{title}.epub")))
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    output_path(
+        title,
+        args.output.as_deref().or(output.as_deref()),
+        desktop.as_deref(),
+    )
 }
 
 fn output_path(title: &str, output: Option<&Path>, desktop: Option<&Path>) -> Result<PathBuf> {
@@ -637,17 +812,25 @@ fn package(file: &mut File, title: &str, pictures: &[Picture], rtl: bool) -> Res
 
 fn run() -> Result<()> {
     let args = Args::parse();
-    if args.books && !cfg!(target_os = "macos") {
+    if let Some(command) = args.command {
+        return config_command(&config_path()?, command);
+    }
+    let directory_arg = args
+        .directory
+        .as_ref()
+        .ok_or("请指定图片目录、ZIP 压缩包或链接")?;
+    let config = Config::load(&config_path()?)?;
+    let books = (args.books || config.books) && !args.no_books;
+    if books && !cfg!(target_os = "macos") {
         return Err("--books 仅支持 macOS".into());
     }
-    let url = args
-        .directory
+    let url = directory_arg
         .to_str()
         .filter(|s| s.starts_with("http://") || s.starts_with("https://"));
     let directory = if url.is_some() {
-        args.directory.clone()
+        directory_arg.clone()
     } else {
-        args.directory.canonicalize()?
+        directory_arg.canonicalize()?
     };
     let archive = url.is_none() && directory.is_file();
     if archive
@@ -670,12 +853,7 @@ fn run() -> Result<()> {
         .to_string()
     };
     let rtl = args.r2l || (!args.l2r && japanese_title(&title));
-    let desktop = if args.desktop || args.output.is_none() {
-        Some(dirs::desktop_dir().ok_or("无法定位系统桌面目录，请使用 --output 指定路径")?)
-    } else {
-        None
-    };
-    let output = output_path(&title, args.output.as_deref(), desktop.as_deref())?;
+    let output = configured_output(&title, &args, &config)?;
     let (extracted, paths) = if let Some(url) = url {
         let (temp, paths) = download(url)?;
         (Some(temp), paths)
@@ -741,7 +919,7 @@ fn run() -> Result<()> {
             );
         }
         println!("输出：{}", output.display());
-        if args.books {
+        if books {
             println!("--books：生成后将尝试用 Books 打开");
         }
         println!("仅预览，未写入文件。");
@@ -770,7 +948,7 @@ fn run() -> Result<()> {
     }
     println!("已生成：{}（{} 页）", output.display(), pictures.len());
     #[cfg(target_os = "macos")]
-    if args.books {
+    if books {
         let status = Command::new("/usr/bin/open")
             .arg("-a")
             .arg("Books")
@@ -866,6 +1044,74 @@ mod tests {
         assert!(capture_time("2025:02:30 00:00:00", Some("+00:00"), None).is_none());
         assert!(capture_time("2025:01:01 00:00:00", Some("bad"), None).is_none());
         assert!(capture_time("2025:01:01 00:00:00", Some("+00:00"), Some("bad")).is_none());
+    }
+
+    #[test]
+    fn config_and_precedence() {
+        let root = std::env::temp_dir().join(format!(
+            "bookforge-config-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path = root.join("bookforge/config.toml");
+        assert!(Config::load(&path).unwrap().desktop.is_none());
+        config_command(&path, ConfigCommand::Init).unwrap();
+        assert!(config_command(&path, ConfigCommand::Init).is_err());
+        config_command(
+            &path,
+            ConfigCommand::Config {
+                action: ConfigAction::Set {
+                    key: "output_dir".into(),
+                    value: root.to_string_lossy().into(),
+                },
+            },
+        )
+        .unwrap();
+        let config = Config::load(&path).unwrap();
+        assert_eq!(config.desktop, Some(false));
+        let args = Args::try_parse_from(["bookforge", "images"]).unwrap();
+        assert_eq!(
+            configured_output("book", &args, &config).unwrap(),
+            root.join("book.epub")
+        );
+        let args = Args::try_parse_from(["bookforge", "images", "-o", "other"]).unwrap();
+        assert_eq!(
+            configured_output("book", &args, &config).unwrap(),
+            Path::new("other.epub")
+        );
+        let args = Args::try_parse_from(["bookforge", "images", "--no-books"]).unwrap();
+        assert!(args.no_books);
+        config_command(
+            &path,
+            ConfigCommand::Config {
+                action: ConfigAction::Set {
+                    key: "books".into(),
+                    value: "true".into(),
+                },
+            },
+        )
+        .unwrap();
+        assert!(Config::load(&path).unwrap().books);
+        let before = fs::read(&path).unwrap();
+        assert!(
+            config_command(
+                &path,
+                ConfigCommand::Config {
+                    action: ConfigAction::Set {
+                        key: "books".into(),
+                        value: "maybe".into()
+                    },
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+        fs::write(&path, "books = perhaps").unwrap();
+        assert!(Config::load(&path).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

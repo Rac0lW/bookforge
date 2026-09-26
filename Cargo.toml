@@ -15,3 +15,5 @@ kamadak-exif = "0.6"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 time = { version = "0.3", features = ["formatting"] }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.6"
