@@ -37,7 +37,7 @@ open -a Books target/smoke/apple-books-sample.epub
 
 - HTTP(S) 链接使用 `gallery-dl` 下载到临时目录并在结束时清理；不支持的网站或没有可用图片时会报错。若未安装，macOS 交互终端会先询问是否运行 `brew install gallery-dl`；非交互环境或其他系统请自行安装。链接默认以 URL 最后一路径段命名，建议用 `-o` 指定书名；`--dry-run` 仍会下载图片，但不会创建 EPUB。
 - 支持图片目录或 ZIP（含子目录）中的 JPEG／PNG／静态 WebP（扩展名不区分大小写）；普通目录仍不递归。ZIP 中非图片文件会忽略，图片按内部路径自然排序；默认 `--sort auto` 对 ZIP 使用名称排序，`--sort time` 可按 EXIF／ZIP 条目时间排序（缺失时用压缩包修改时间）。解压到临时目录并在结束时清理；每张图片限 512 MiB，总计限 2 GiB。暂不支持其他压缩格式。
-- 一图一页，页面尺寸取原图尺寸；第一张图同时作为书架封面和正文第一页。全是横图或方图时 EPUB 请求整本单页；含竖图时请求竖屏单页、横屏双页，并为横图或方图逐页请求独页（Apple Books 是否遵守混排时的逐页设置仍需实测）。默认从左往右翻页；文件夹名或 ZIP 名含日文假名时默认从右往左，`--r2l`／`--l2r` 可覆盖。纯汉字无法可靠区分中文与日文，请手动指定。Apple Books 未明确列出 EPUB 的 `landscape` 双页值，具体效果须在设备上确认；可在阅读器里放大查看细字。JPEG／PNG 保留原始字节；WebP 自动转成 PNG 嵌入 EPUB，保留解码后的像素与透明度，不修改源文件，但输出体积可能增大。
+- 始终竖屏单页、一图一页：竖图保留原尺寸，横图／方图完整居中于竖向 2:3 页面，不裁切原图；第一张图同时作为书架封面和正文第一页。默认从左往右翻页；文件夹名或 ZIP 名含日文假名时默认从右往左，`--r2l`／`--l2r` 可覆盖。纯汉字无法可靠区分中文与日文，请手动指定；可在阅读器里放大查看细字。JPEG／PNG 保留原始字节；WebP 自动转成 PNG 嵌入 EPUB，保留解码后的像素与透明度，不修改源文件，但输出体积可能增大。
 - 动态 WebP 明确报错，不静默取第一帧；预览会标记 `[WebP → PNG]`，同样检查动态和损坏文件。
 - 未指定 `-o` 或 `-d` 时，默认输出到系统桌面，名称为 `输入文件夹名称.epub`、`压缩包名称.epub` 或 `链接末段.epub`；`-o`／`--output` 指定输出文件名或路径（相对路径基于当前目录），没有扩展名时补 `.epub`，不覆盖已有文件。
 - `-d`／`--desktop` 使用系统桌面目录；与 `-o` 同用时只接受文件名，不接受目录路径。输出父目录必须已存在。
@@ -70,7 +70,7 @@ java -jar target/epubcheck/epubcheck-5.3.0/epubcheck.jar target/smoke/apple-book
 
 EPUBCheck 不属于构建依赖；若本地不存在，请从官方发布页下载。
 
-用户已反馈首版单页样书在 Apple Books 中看起来正常。新双页布局在 iPhone／iPad 的横竖屏切换和缩放尚待人工确认；重新检查时，样书应为红色竖图 → 绿色横图 → 蓝色方图，四边黑框完整，封面为红色竖图。
+单页样书已反馈在 Apple Books 中显示正常；横图／方图在竖向页面上的显示及 iPhone／iPad 缩放仍待人工确认。样书应为红色竖图 → 绿色横图 → 蓝色方图，四边黑框完整，封面为红色竖图。
 
 参考：[Apple Books Asset Guide](https://help.apple.com/itc/booksassetguide/en.lproj/static.html)、[EPUB 3.3](https://www.w3.org/TR/epub-33/)、[EPUBCheck](https://github.com/w3c/epubcheck/releases)。
 

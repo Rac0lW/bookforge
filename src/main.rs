@@ -562,9 +562,6 @@ fn package(file: &mut File, title: &str, pictures: &[Picture], rtl: bool) -> Res
     );
     let mut spine = String::new();
     let mut toc = String::new();
-    let first_side = if rtl { "left" } else { "right" };
-    let next_side = if rtl { "right" } else { "left" };
-    let mut side = first_side;
     progress("生成", 0, pictures.len());
     for (index, picture) in pictures.iter().enumerate() {
         let n = index + 1;
@@ -575,32 +572,29 @@ fn package(file: &mut File, title: &str, pictures: &[Picture], rtl: bool) -> Res
             ""
         };
         manifest.push_str(&format!(r#"<item id="image{n}" href="{image_name}" media-type="{}"{cover}/><item id="page{n}" href="pages/{n}.xhtml" media-type="application/xhtml+xml"/>"#, picture.media_type));
-        if picture.width >= picture.height {
-            // A landscape image may already be a full spread: keep it intact and centered.
-            spine.push_str(&format!(
-                r#"<itemref idref="page{n}" properties="rendition:spread-none"/>"#
-            ));
-            side = next_side;
-        } else {
-            spine.push_str(&format!(
-                r#"<itemref idref="page{n}" properties="page-spread-{side}"/>"#
-            ));
-            side = if side == first_side {
-                next_side
-            } else {
-                first_side
-            };
-        }
+        spine.push_str(&format!(
+            r#"<itemref idref="page{n}" properties="rendition:spread-none"/>"#
+        ));
         toc.push_str(&format!(
             r#"<li><a href="pages/{n}.xhtml">第 {n} 页</a></li>"#
         ));
-        let (w, h) = (picture.width, picture.height);
+        // Wide/square images stay intact, centered on a portrait 2:3 page.
+        let (w, h) = (
+            picture.width,
+            if picture.width >= picture.height {
+                picture
+                    .width
+                    .saturating_add(picture.width / 2 + picture.width % 2)
+            } else {
+                picture.height
+            },
+        );
         add(
             &mut zip,
             &format!("EPUB/pages/{n}.xhtml"),
             &format!(
                 r#"<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml" lang="zh" xml:lang="zh"><head><title>第 {n} 页</title><meta name="viewport" content="width={w}, height={h}"/><style>html,body{{margin:0;padding:0;width:{w}px;height:{h}px;}}img{{display:block;width:{w}px;height:{h}px;}}</style></head><body><img src="../{image_name}" alt="第 {n} 页"/></body></html>"#
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh" xml:lang="zh"><head><title>第 {n} 页</title><meta name="viewport" content="width={w}, height={h}"/><style>html,body{{margin:0;padding:0;width:{w}px;height:{h}px;}}img{{display:block;width:{w}px;height:{h}px;object-fit:contain;}}</style></head><body><img src="../{image_name}" alt="第 {n} 页"/></body></html>"#
             ),
         )?;
         zip.start_file(
@@ -629,18 +623,12 @@ fn package(file: &mut File, title: &str, pictures: &[Picture], rtl: bool) -> Res
         .replace_nanosecond(0)?
         .format(&time::format_description::well_known::Rfc3339)?;
     let direction = if rtl { "rtl" } else { "ltr" };
-    // Apple Books honors the book-level spread setting even when every item requests spread-none.
-    let spread = if pictures.iter().all(|p| p.width >= p.height) {
-        "none"
-    } else {
-        "landscape"
-    };
     add(
         &mut zip,
         "EPUB/package.opf",
         &format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id" prefix="rendition: http://www.idpf.org/vocab/rendition/#"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="book-id">urn:bookforge:{identifier}</dc:identifier><dc:title>{title}</dc:title><dc:language>zh</dc:language><meta property="dcterms:modified">{modified}</meta><meta property="rendition:layout">pre-paginated</meta><meta property="rendition:spread">{spread}</meta></metadata><manifest>{manifest}</manifest><spine page-progression-direction="{direction}">{spine}</spine></package>"#
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id" prefix="rendition: http://www.idpf.org/vocab/rendition/#"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="book-id">urn:bookforge:{identifier}</dc:identifier><dc:title>{title}</dc:title><dc:language>zh</dc:language><meta property="dcterms:modified">{modified}</meta><meta property="rendition:layout">pre-paginated</meta><meta property="rendition:spread">none</meta></metadata><manifest>{manifest}</manifest><spine page-progression-direction="{direction}">{spine}</spine></package>"#
         ),
     )?;
     zip.finish()?;
@@ -714,13 +702,8 @@ fn run() -> Result<()> {
         sort_pictures(&mut pictures, args.sort, root, archive)?
     );
     println!(
-        "阅读方向：{}；{}",
-        if rtl { "从右往左" } else { "从左往右" },
-        if pictures.iter().all(|p| p.width >= p.height) {
-            "全横图／方图单页"
-        } else {
-            "横屏双页、竖屏单页（横图／方图请求独页）"
-        }
+        "阅读方向：{}；竖屏单页",
+        if rtl { "从右往左" } else { "从左往右" }
     );
     if args.dry_run {
         for (i, picture) in pictures.iter().enumerate() {
