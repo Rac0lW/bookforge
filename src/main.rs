@@ -41,8 +41,11 @@ struct Args {
     #[arg(short, long)]
     output: Option<PathBuf>,
     /// 强制输出到系统桌面目录（默认位置可通过配置修改）
-    #[arg(short, long)]
+    #[arg(short = 'D', long)]
     desktop: bool,
+    /// 输出成功后询问 y/n，确认后删除原 ZIP 或整个输入目录
+    #[arg(short, long)]
+    delete: bool,
     /// 生成后在 macOS 中尝试用 Books 打开 EPUB 并导入书库
     #[arg(long, conflicts_with = "no_books")]
     books: bool,
@@ -922,6 +925,9 @@ fn run() -> Result<()> {
         if books {
             println!("--books：生成后将尝试用 Books 打开");
         }
+        if args.delete {
+            println!("--delete：仅预览，保留原文件。");
+        }
         println!("仅预览，未写入文件。");
         return Ok(());
     }
@@ -963,6 +969,45 @@ fn run() -> Result<()> {
         }
         println!("已交给 Books 打开，请在 Books 中确认导入。");
     }
+    if args.delete {
+        if url.is_some() {
+            println!("链接输入无本地原文件可删除；下载的临时文件会自动清理。");
+        } else {
+            confirm_delete(directory_arg, &output)?;
+        }
+    }
+    Ok(())
+}
+
+fn confirm_delete(source: &Path, output: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(source)?;
+    if source.canonicalize()?.is_dir() && output.canonicalize()?.starts_with(source.canonicalize()?)
+    {
+        println!("已保留原目录：EPUB 输出位于原目录内，删除会同时移除成品。");
+        return Ok(());
+    }
+    eprint!(
+        "是否删除{} {}？[y/N] ",
+        if metadata.is_dir() {
+            "整个原目录及其全部内容"
+        } else {
+            "原文件"
+        },
+        source.display()
+    );
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    if !answer.trim().eq_ignore_ascii_case("y") {
+        println!("已保留：{}", source.display());
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        fs::remove_dir_all(source)?;
+    } else {
+        fs::remove_file(source)?;
+    }
+    println!("已删除：{}", source.display());
     Ok(())
 }
 
@@ -996,7 +1041,7 @@ mod tests {
         let args = Args::try_parse_from([
             "bookforge",
             "--sort=time",
-            "-d",
+            "-D",
             "images",
             "--dry-run",
             "-o",

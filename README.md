@@ -31,13 +31,14 @@ bookforge config set desktop false       # use current directory by default
 # Choose an output path
 bookforge ./pictures -o ./books/comic.epub
 bookforge ./comic.zip -o ./books/comic.epub
+bookforge ./comic.zip -o ./books/comic.epub -d # ask y/n before deleting the source ZIP
 bookforge 'https://example.org/album' -o ./books/album.epub
 
 # macOS: generate and attempt to import into Books
 bookforge ./comic.zip -o ./books/comic.epub --books
 
 # Choose a filename on your desktop
-bookforge ./pictures -d -o comic.epub
+bookforge ./pictures -D -o comic.epub
 
 # Preview the order, cover and destination without writing a file
 bookforge ./pictures --sort auto --dry-run
@@ -61,6 +62,7 @@ CLI help and status messages are currently in Chinese.
 - **JPEG, PNG and static WebP:** extensions are case-insensitive. JPEG/PNG bytes are preserved; WebP is converted to PNG, preserving decoded pixels and transparency. Conversion may increase file size. Source files are never modified.
 - **Explicit failures:** animated WebP and damaged images are rejected rather than silently skipped. Empty image folders also fail.
 - **Safe output:** existing files are never overwritten. Failed writes attempt to remove the incomplete output.
+- **Optional source deletion:** `-d` / `--delete` asks `[y/N]` after successful output. Only `y` (case-insensitive) deletes the original ZIP or the entire input directory and all its contents. Other answers, Enter, or EOF retain the source. Preview and failed output retain it too. If the EPUB is inside the source directory, that directory is retained to protect the book. URL inputs have no local source to delete. The desktop shortcut is now `-D` / `--desktop`.
 - **URL input:** HTTP(S) links are downloaded with `gallery-dl` into a temporary directory, cleaned up after use. On macOS interactive terminals, if missing, asks before running `brew install gallery-dl`; elsewhere or noninteractively, install it yourself. Unsupported sites or links without usable images fail. The default EPUB name uses the last URL path segment; use `-o` for a preferred name. `--dry-run` still downloads images, but does not write an EPUB.
 - **ZIP input:** extracts JPEG, PNG and static WebP images (including nested folders) to a temporary directory; non-image files are ignored. Auto sorting uses natural order of full paths inside ZIP; explicit `--sort time` prefers EXIF then ZIP entry timestamps (or archive mtime if missing). Temporary files are cleaned up; limits are 512 MiB per image and 2 GiB total. Other archive formats are not supported.
 - **Parallel validation:** image decoding uses up to four CPU cores (when available), preserving page order and bounding peak memory. ZIP extraction and EPUB writing remain sequential.
@@ -76,13 +78,13 @@ The optional `~/.config/bookforge/config.toml` uses `books = false` and `desktop
 
 | Options | Destination |
 | --- | --- |
-| Neither `-o` nor `-d` | Configured default destination (desktop unless changed), named `<folder-name>.epub`, `<archive-name>.epub`, or `<last-URL-segment>.epub` |
+| Neither `-o` nor `-D` | Configured default destination (desktop unless changed), named `<folder-name>.epub`, `<archive-name>.epub`, or `<last-URL-segment>.epub` |
 | `-o filename` | Current working directory |
 | `-o path/to/filename` | The specified path |
-| `-d` | System desktop, named `<folder-name>.epub` |
-| `-d -o filename` | System desktop, with a custom filename |
+| `-D` | System desktop, named `<folder-name>.epub` |
+| `-D -o filename` | System desktop, with a custom filename |
 
-`-o` / `--output` overrides the configured destination and appends `.epub` when no extension is supplied. `-d` forces the desktop; with `-d` / `--desktop`, `-o` must be a filename, not a directory path. The output parent directory must already exist. If the system desktop cannot be located, use an explicit `-o` path.
+`-o` / `--output` overrides the configured destination and appends `.epub` when no extension is supplied. `-D` forces the desktop; with `-D` / `--desktop`, `-o` must be a filename, not a directory path. The output parent directory must already exist. If the system desktop cannot be located, use an explicit `-o` path.
 
 ### Sorting
 

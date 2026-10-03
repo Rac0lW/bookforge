@@ -35,7 +35,7 @@ subprocess.run(["cargo", "build"], cwd=ROOT, check=True)
 BINARY = ROOT / "target" / "debug" / "bookforge"
 OUTPUT = WORK / "apple-books-sample.epub"
 OUTPUT.unlink(missing_ok=True)
-command = [str(BINARY), str(IMAGES), "-o", str(OUTPUT)]
+command = [str(BINARY), str(IMAGES), "-o", str(OUTPUT), "--no-books"]
 subprocess.run(command, check=True)
 with zipfile.ZipFile(OUTPUT) as epub:
     first = epub.infolist()[0]
@@ -101,7 +101,7 @@ text, order = preview(photos)
 assert "auto → time" in text and order == ["c.png", "a.png", "b.png"]
 time_output = WORK / "time.epub"
 time_output.unlink(missing_ok=True)
-subprocess.run([str(BINARY), str(photos), "--sort", "time", "-o", str(time_output)], check=True)
+subprocess.run([str(BINARY), str(photos), "--sort", "time", "-o", str(time_output), "--no-books"], check=True)
 with zipfile.ZipFile(time_output) as epub:
     for index, name in enumerate(["c.png", "a.png", "b.png"], 1):
         assert epub.read(f"EPUB/images/{index}.png") == (photos / name).read_bytes()
@@ -143,10 +143,10 @@ assert "EXIF 1 张，修改时间 2 张" in text and order == ["b.png", "c.png",
 # Desktop paths are previewed only: never write to the real desktop in tests.
 text, _ = preview(IMAGES, "--desktop", "--output", "bookforge-smoke")
 assert "bookforge-smoke.epub" in text
-desktop_preview = preview(IMAGES, "-d")[0]
+desktop_preview = preview(IMAGES, "-D")[0]
 assert "测试 & 图片.epub" in desktop_preview
-assert preview(IMAGES)[0] == desktop_preview
+assert preview(IMAGES, "--desktop")[0] == desktop_preview
 assert "输出：custom.epub\n" in preview(IMAGES, "-o", "custom.epub")[0]
-assert subprocess.run([str(BINARY), str(IMAGES), "-d", "-o", "../bad.epub", "--dry-run"], capture_output=True).returncode != 0
+assert subprocess.run([str(BINARY), str(IMAGES), "-D", "-o", "../bad.epub", "--dry-run"], capture_output=True).returncode != 0
 assert subprocess.run([str(BINARY), str(IMAGES), "--sort", "bad"], capture_output=True).returncode != 0
 print(f"PASS: EPUB structure, cover, sorting modes, EXIF/timezones, dry-run, desktop paths, error handling\nSample: {OUTPUT}")
