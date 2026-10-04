@@ -35,6 +35,7 @@ fn link_download_preview_and_missing_tool() {
     let output = root.join("album.epub");
     let invoke = |dry| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_bookforge"));
+        command.arg("--no-books");
         command
             .arg("https://example.org/album?x=1")
             .arg("-o")

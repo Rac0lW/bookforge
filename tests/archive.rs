@@ -43,6 +43,7 @@ fn zip_images_in_path_order_and_safe_extraction() {
     };
     let invoke = |dry: bool| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_bookforge"));
+        command.arg("--no-books");
         command.arg(&archive).arg("-o").arg(&output);
         if dry {
             command.arg("--dry-run");

@@ -4,7 +4,6 @@ import os
 import pathlib
 import struct
 import subprocess
-import sys
 import xml.etree.ElementTree as ET
 import zipfile
 import zlib
@@ -35,7 +34,7 @@ subprocess.run(["cargo", "build"], cwd=ROOT, check=True)
 BINARY = ROOT / "target" / "debug" / "bookforge"
 OUTPUT = WORK / "apple-books-sample.epub"
 OUTPUT.unlink(missing_ok=True)
-command = [str(BINARY), str(IMAGES), "-o", str(OUTPUT), "--no-books"]
+command = [str(BINARY), "--no-books", str(IMAGES), "-o", str(OUTPUT)]
 subprocess.run(command, check=True)
 with zipfile.ZipFile(OUTPUT) as epub:
     first = epub.infolist()[0]
@@ -59,12 +58,12 @@ bad.mkdir(exist_ok=True)
 (bad / "1.png").write_bytes(b"damaged PNG")
 failed_output = WORK / "bad.epub"
 failed_output.unlink(missing_ok=True)
-assert subprocess.run([str(BINARY), str(bad), "-o", str(failed_output)], capture_output=True).returncode != 0
+assert subprocess.run([str(BINARY), "--no-books", str(bad), "-o", str(failed_output)], capture_output=True).returncode != 0
 assert not failed_output.exists()
 
 
 def preview(directory, *options):
-    result = subprocess.run([str(BINARY), str(directory), "--dry-run", *options],
+    result = subprocess.run([str(BINARY), "--no-books", str(directory), "--dry-run", *options],
                             capture_output=True, text=True, check=True)
     order = [pathlib.Path(line.split(": ", 1)[1].split(" [", 1)[0]).name
              for line in result.stdout.splitlines() if line.split(":", 1)[0].isdigit()]
@@ -79,13 +78,7 @@ preview_output.unlink(missing_ok=True)
 text, order = preview(IMAGES, "-o", str(preview_output))
 assert "auto → name" in text and order == ["1.png", "2.png", "10.png"]
 assert not preview_output.exists()
-if sys.platform == "darwin":
-    text, _ = preview(IMAGES, "-o", str(preview_output), "--books")
-    assert "生成后将尝试用 Books 打开" in text and not preview_output.exists()
-else:
-    result = subprocess.run([str(BINARY), str(IMAGES), "--books", "-o", str(preview_output)],
-                            capture_output=True, text=True)
-    assert result.returncode != 0 and "仅支持 macOS" in result.stderr and not preview_output.exists()
+assert "生成后将尝试用 Books 打开" not in text
 assert preview(IMAGES, "--sort", "time")[1] == ["10.png", "2.png", "1.png"]
 assert preview(IMAGES, "--sort", "name")[1] == ["1.png", "2.png", "10.png"]
 # Preview never truncates an existing output.
@@ -101,7 +94,7 @@ text, order = preview(photos)
 assert "auto → time" in text and order == ["c.png", "a.png", "b.png"]
 time_output = WORK / "time.epub"
 time_output.unlink(missing_ok=True)
-subprocess.run([str(BINARY), str(photos), "--sort", "time", "-o", str(time_output), "--no-books"], check=True)
+subprocess.run([str(BINARY), "--no-books", str(photos), "--sort", "time", "-o", str(time_output)], check=True)
 with zipfile.ZipFile(time_output) as epub:
     for index, name in enumerate(["c.png", "a.png", "b.png"], 1):
         assert epub.read(f"EPUB/images/{index}.png") == (photos / name).read_bytes()
@@ -147,6 +140,6 @@ desktop_preview = preview(IMAGES, "-D")[0]
 assert "测试 & 图片.epub" in desktop_preview
 assert preview(IMAGES, "--desktop")[0] == desktop_preview
 assert "输出：custom.epub\n" in preview(IMAGES, "-o", "custom.epub")[0]
-assert subprocess.run([str(BINARY), str(IMAGES), "-D", "-o", "../bad.epub", "--dry-run"], capture_output=True).returncode != 0
-assert subprocess.run([str(BINARY), str(IMAGES), "--sort", "bad"], capture_output=True).returncode != 0
+assert subprocess.run([str(BINARY), "--no-books", str(IMAGES), "-D", "-o", "../bad.epub", "--dry-run"], capture_output=True).returncode != 0
+assert subprocess.run([str(BINARY), "--no-books", str(IMAGES), "--sort", "bad"], capture_output=True).returncode != 0
 print(f"PASS: EPUB structure, cover, sorting modes, EXIF/timezones, dry-run, desktop paths, error handling\nSample: {OUTPUT}")

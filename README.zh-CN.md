@@ -35,14 +35,17 @@ cargo run -- ./漫画.zip -o ./漫画.epub -d # 输出成功后询问 y/n，确�
 cargo run -- ./漫画.zip -o ./漫画.epub --books # macOS：生成后尝试导入 Books
 cargo run -- ./漫画.zip --dry-run
 cargo run -- 'https://example.org/album' -o ./画集.epub # 从链接下载后制作
+cargo run -- 'https://18comic.vip/photo/1449263' -o ./章节.epub # jmcomic：下载该章节
+cargo run -- 1449263 -o ./整本.epub # jmcomic：下载整本（也接受 JM1449263）
 cargo run -- ./漫画.zip --r2l -o ./日漫.epub # 强制从右往左
 cargo run -- ./漫画.zip --l2r -o ./左翻.epub # 强制从左往右
 cargo test
 python3 scripts/smoke.py
-open -a Books target/smoke/apple-books-sample.epub
 ```
 
 - HTTP(S) 链接使用 `gallery-dl` 下载到临时目录并在结束时清理；不支持的网站或没有可用图片时会报错。若未安装，macOS 交互终端会先询问是否运行 `brew install gallery-dl`；非交互环境或其他系统请自行安装。链接默认以 URL 最后一路径段命名，建议用 `-o` 指定书名；`--dry-run` 仍会下载图片，但不会创建 EPUB。
+- `18comic.vip`（含 `www`）的 `/photo/序号` 链接使用本地 `jmcomic` 下载该章节；`/album/序号`、纯数字或 `JM序号` 下载整本。已存在的同名本地路径优先处理。运行时检测 Python 能否导入 jmcomic，也识别 uv／pipx 命令指向的独立 Python；找不到时只提示自行下载并安装，不提供安装命令或自动安装。特殊环境可设置 `BOOKFORGE_JM_PYTHON` 为已安装 jmcomic 的 Python 路径。仅下载源码目录还不够，所选 Python 必须能够导入它。
+- JM 静态图片由 jmcomic 解码后保存为 PNG；不支持 GIF 页，遇到时停止并报错。整本按章节及页码连续编号；默认书名来自下载结果（移除文件名不允许的字符），可用 `-o` 覆盖。使用内置下载设置，不读取 `JM_OPTION_PATH` 或执行用户配置插件；网络访问使用 jmcomic 默认客户端。下载失败或图片不完整时停止，临时图片自动清理。`--dry-run` 同样下载、校验并清理图片，只有 EPUB 不写入；`--delete` 对 JM 输入没有本地原文件可删除。可用 `--r2l`／`--l2r` 指定翻页方向。
 - 支持图片目录或 ZIP（含子目录）中的 JPEG／PNG／静态 WebP（扩展名不区分大小写）；普通目录仍不递归。ZIP 中非图片文件会忽略，图片按内部路径自然排序；默认 `--sort auto` 对 ZIP 使用名称排序，`--sort time` 可按 EXIF／ZIP 条目时间排序（缺失时用压缩包修改时间）。解压到临时目录并在结束时清理；每张图片限 512 MiB，总计限 2 GiB。暂不支持其他压缩格式。
 - 始终竖屏单页、一图一页：竖图保留原尺寸，横图／方图完整居中于竖向 2:3 页面，不裁切原图；第一张图同时作为书架封面和正文第一页。默认从左往右翻页；文件夹名或 ZIP 名含日文假名时默认从右往左，`--r2l`／`--l2r` 可覆盖。纯汉字无法可靠区分中文与日文，请手动指定；可在阅读器里放大查看细字。JPEG／PNG 保留原始字节；WebP 自动转成 PNG 嵌入 EPUB，保留解码后的像素与透明度，不修改源文件，但输出体积可能增大。
 - 动态 WebP 明确报错，不静默取第一帧；预览会标记 `[WebP → PNG]`，同样检查动态和损坏文件。
@@ -64,6 +67,8 @@ open -a Books target/smoke/apple-books-sample.epub
 自动排序只是启发式，不保证阅读顺序正确；章节／页码等多段数字名称建议显式 `--sort name`。无时区 EXIF 按运行机器的本地时区解释；遇到无法确定的夏令时时刻退回修改时间。图片来自不同时区或修改时间受复制影响时，请先用 `--dry-run` 检查，再指定排序方式。
 
 ## 验证
+
+测试禁止导入 Books；所有测试转换命令必须显式带 `--no-books`，避免用户配置触发导入。样书仅保存在本地，用结构检查和 EPUBCheck 验证。
 
 `python3 scripts/smoke.py` 生成三张有黑色边框的测试图片，并检查 EPUB 结构、三种排序、EXIF 时区与修改时间回退、封面、原图保留、只读预览、桌面路径冲突、不覆盖文件和损坏图片报错。桌面输出仅预览，不向真实桌面写测试文件。
 

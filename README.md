@@ -33,6 +33,8 @@ bookforge ./pictures -o ./books/comic.epub
 bookforge ./comic.zip -o ./books/comic.epub
 bookforge ./comic.zip -o ./books/comic.epub -d # ask y/n before deleting the source ZIP
 bookforge 'https://example.org/album' -o ./books/album.epub
+bookforge 'https://18comic.vip/photo/1449263' -o ./books/chapter.epub
+bookforge 1449263 -o ./books/album.epub # also accepts JM1449263
 
 # macOS: generate and attempt to import into Books
 bookforge ./comic.zip -o ./books/comic.epub --books
@@ -64,6 +66,8 @@ CLI help and status messages are currently in Chinese.
 - **Safe output:** existing files are never overwritten. Failed writes attempt to remove the incomplete output.
 - **Optional source deletion:** `-d` / `--delete` asks `[y/N]` after successful output. Only `y` (case-insensitive) deletes the original ZIP or the entire input directory and all its contents. Other answers, Enter, or EOF retain the source. Preview and failed output retain it too. If the EPUB is inside the source directory, that directory is retained to protect the book. URL inputs have no local source to delete. The desktop shortcut is now `-D` / `--desktop`.
 - **URL input:** HTTP(S) links are downloaded with `gallery-dl` into a temporary directory, cleaned up after use. On macOS interactive terminals, if missing, asks before running `brew install gallery-dl`; elsewhere or noninteractively, install it yourself. Unsupported sites or links without usable images fail. The default EPUB name uses the last URL path segment; use `-o` for a preferred name. `--dry-run` still downloads images, but does not write an EPUB.
+- **JM input:** `18comic.vip` (including `www`) `/photo/ID` links use the locally installed `jmcomic` to download one chapter; `/album/ID`, bare numeric IDs and `JMID` download the whole album. Existing local paths take precedence. Detection checks Python imports, including the isolated interpreter behind uv/pipx executables. Missing jmcomic only prompts you to download and install it yourself; no installation commands or automatic installation are offered. Set `BOOKFORGE_JM_PYTHON` to your environment's Python if needed; downloading source alone is insufficient unless that Python can import it.
+- **JM ordering and output:** jmcomic decodes static images to PNG; GIF pages are unsupported and stop conversion with an error. Pages are numbered in chapter and page order. The default filename uses the downloaded title with unsafe filename characters removed; `-o` overrides it. Built-in settings use jmcomic's default client without loading `JM_OPTION_PATH` or user plugins. Failed or incomplete downloads stop conversion, and temporary images are cleaned up. `--dry-run` still downloads and validates images without writing an EPUB. JM inputs have no local source to delete with `--delete`. Use `--r2l` / `--l2r` to override reading direction.
 - **ZIP input:** extracts JPEG, PNG and static WebP images (including nested folders) to a temporary directory; non-image files are ignored. Auto sorting uses natural order of full paths inside ZIP; explicit `--sort time` prefers EXIF then ZIP entry timestamps (or archive mtime if missing). Temporary files are cleaned up; limits are 512 MiB per image and 2 GiB total. Other archive formats are not supported.
 - **Parallel validation:** image decoding uses up to four CPU cores (when available), preserving page order and bounding peak memory. ZIP extraction and EPUB writing remain sequential.
 - **Concise output and progress:** normal runs show the sort choice, page count, cover and result; interactive terminals also show progress bars for extraction, validation and packaging. Progress is hidden when output is redirected.
@@ -96,6 +100,8 @@ Automatic ordering is a heuristic, not a guarantee. For filenames with chapter a
 
 ## Development and validation
 
+Tests must never import samples into Books. Every test conversion must explicitly pass `--no-books` so user defaults cannot trigger an import. Validate local artifacts with structure checks and EPUBCheck.
+
 ```sh
 cargo fmt --check
 cargo test
@@ -106,9 +112,6 @@ python3 scripts/smoke.py
 The smoke check creates a portrait/landscape/square sample and checks EPUB structure, sorting, EXIF timezones and fallbacks, cover selection, original bytes, output protection, desktop paths and read-only previews. Desktop checks do not write to your actual desktop.
 
 ```sh
-# macOS: inspect the sample in Apple Books
-open -a Books target/smoke/apple-books-sample.epub
-
 # Print the temporary WebP sample path
 cargo test --test webp -- --nocapture
 ```

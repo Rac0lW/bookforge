@@ -29,6 +29,7 @@ fn webp_conversion_and_rejection() {
     let output = root.join("webp.epub");
     let invoke = |extra: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_bookforge"))
+            .arg("--no-books")
             .arg(&input)
             .arg("-o")
             .arg(&output)
@@ -126,6 +127,7 @@ fn webp_conversion_and_rejection() {
     let rejected = root.join("rejected.epub");
     assert!(
         !Command::new(env!("CARGO_BIN_EXE_bookforge"))
+            .arg("--no-books")
             .arg(&input)
             .arg("-o")
             .arg(&rejected)
@@ -145,6 +147,6 @@ fn webp_conversion_and_rejection() {
     assert!(!invoke(&["--dry-run"]).status.success());
     assert!(!invoke(&[]).status.success());
     assert_eq!(fs::read(&output).unwrap(), untouched);
-    // Keep the successful EPUB for optional EPUBCheck / Apple Books inspection.
+    // Keep the successful EPUB for optional EPUBCheck inspection; never import test samples into Books.
     println!("WebP sample: {}", output.display());
 }

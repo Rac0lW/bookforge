@@ -20,6 +20,8 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+mod jm;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum Sort {
     Auto,
@@ -33,7 +35,7 @@ enum Sort {
     about = "将图片目录、ZIP 压缩包或链接转换为 Apple Books 固定版式 EPUB"
 )]
 struct Args {
-    /// 图片目录、ZIP 压缩包或 HTTP(S) 图片链接
+    /// 图片目录、ZIP 压缩包、HTTP(S) 图片链接或 JM 序号
     directory: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<ConfigCommand>,
@@ -821,7 +823,7 @@ fn run() -> Result<()> {
     let directory_arg = args
         .directory
         .as_ref()
-        .ok_or("请指定图片目录、ZIP 压缩包或链接")?;
+        .ok_or("请指定图片目录、ZIP 压缩包、链接或 JM 序号")?;
     let config = Config::load(&config_path()?)?;
     let books = (args.books || config.books) && !args.no_books;
     if books && !cfg!(target_os = "macos") {
@@ -830,12 +832,18 @@ fn run() -> Result<()> {
     let url = directory_arg
         .to_str()
         .filter(|s| s.starts_with("http://") || s.starts_with("https://"));
-    let directory = if url.is_some() {
+    let jm = if directory_arg.exists() {
+        None
+    } else {
+        directory_arg.to_str().and_then(jm::Source::parse)
+    };
+    let remote = url.is_some() || jm.is_some();
+    let directory = if remote {
         directory_arg.clone()
     } else {
         directory_arg.canonicalize()?
     };
-    let archive = url.is_none() && directory.is_file();
+    let archive = !remote && directory.is_file();
     if archive
         && !directory
             .extension()
@@ -843,7 +851,9 @@ fn run() -> Result<()> {
     {
         return Err("只支持 ZIP 压缩包".into());
     }
-    let title = if let Some(url) = url {
+    let mut title = if let Some(jm) = &jm {
+        format!("JM{}", jm.id)
+    } else if let Some(url) = url {
         url_title(url)
     } else {
         (if archive {
@@ -855,9 +865,13 @@ fn run() -> Result<()> {
         .unwrap_or("book")
         .to_string()
     };
-    let rtl = args.r2l || (!args.l2r && japanese_title(&title));
-    let output = configured_output(&title, &args, &config)?;
-    let (extracted, paths) = if let Some(url) = url {
+    let (extracted, paths) = if let Some(jm) = &jm {
+        let python = jm::python()?;
+        let temp = temporary_directory()?;
+        let (name, paths) = jm.download(&python, &temp.0)?;
+        title = name;
+        (Some(temp), paths)
+    } else if let Some(url) = url {
         let (temp, paths) = download(url)?;
         (Some(temp), paths)
     } else if archive {
@@ -870,6 +884,8 @@ fn run() -> Result<()> {
     } else {
         (None, directory_paths(&directory)?)
     };
+    let rtl = args.r2l || (!args.l2r && japanese_title(&title));
+    let output = configured_output(&title, &args, &config)?;
     let root = extracted
         .as_ref()
         .map_or(directory.as_path(), |temp| temp.0.as_path());
@@ -907,7 +923,7 @@ fn run() -> Result<()> {
                         directory.display(),
                         picture.path.strip_prefix(root)?.display()
                     )
-                } else if url.is_some() {
+                } else if remote {
                     picture.path.strip_prefix(root)?.display().to_string()
                 } else {
                     picture.path.display().to_string()
@@ -970,7 +986,7 @@ fn run() -> Result<()> {
         println!("已交给 Books 打开，请在 Books 中确认导入。");
     }
     if args.delete {
-        if url.is_some() {
+        if remote {
             println!("链接输入无本地原文件可删除；下载的临时文件会自动清理。");
         } else {
             confirm_delete(directory_arg, &output)?;

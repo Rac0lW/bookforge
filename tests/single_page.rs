@@ -44,6 +44,7 @@ fn portrait_single_pages_and_reading_direction() {
             flag.unwrap_or("auto")
         ));
         let mut command = Command::new(env!("CARGO_BIN_EXE_bookforge"));
+        command.arg("--no-books");
         command.arg(source).arg("-o").arg(&output);
         if let Some(flag) = flag {
             command.arg(flag);
@@ -88,6 +89,7 @@ fn portrait_single_pages_and_reading_direction() {
     fs::copy(japanese.join("2.png"), wide.join("1.png")).unwrap();
     let output = root.join("wide.epub");
     let result = Command::new(env!("CARGO_BIN_EXE_bookforge"))
+        .arg("--no-books")
         .arg(&wide)
         .arg("-o")
         .arg(&output)
@@ -110,6 +112,7 @@ fn portrait_single_pages_and_reading_direction() {
     assert!(page.contains("width=4, height=6"));
 
     let conflict = Command::new(env!("CARGO_BIN_EXE_bookforge"))
+        .arg("--no-books")
         .arg(&japanese)
         .args(["--r2l", "--l2r", "--dry-run"])
         .output()
