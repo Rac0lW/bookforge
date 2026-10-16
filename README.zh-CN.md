@@ -37,12 +37,14 @@ cargo run -- ./漫画.zip --dry-run
 cargo run -- 'https://example.org/album' -o ./画集.epub # 从链接下载后制作
 cargo run -- 'https://18comic.vip/photo/1449263' -o ./章节.epub # jmcomic：下载该章节
 cargo run -- 1449263 -o ./整本.epub # jmcomic：下载整本（也接受 JM1449263）
+cargo run -- -p # macOS：从剪贴板读取目录、ZIP、链接或 JM 序号
 cargo run -- ./漫画.zip --r2l -o ./日漫.epub # 强制从右往左
 cargo run -- ./漫画.zip --l2r -o ./左翻.epub # 强制从左往右
 cargo test
 python3 scripts/smoke.py
 ```
 
+- `-p`／`--paste` 通过 `pbpaste` 读取剪贴板，去掉首尾空白后按普通输入处理并打印读到的内容；不能与输入参数同用。剪贴板为空、含多行或非 UTF-8 文本时报错；仅支持 macOS。
 - HTTP(S) 链接使用 `gallery-dl` 下载到临时目录并在结束时清理；不支持的网站或没有可用图片时会报错。若未安装，macOS 交互终端会先询问是否运行 `brew install gallery-dl`；非交互环境或其他系统请自行安装。链接默认以 URL 最后一路径段命名，建议用 `-o` 指定书名；`--dry-run` 仍会下载图片，但不会创建 EPUB。
 - `18comic.vip`（含 `www`）的 `/photo/序号` 链接使用本地 `jmcomic` 下载该章节；`/album/序号`、纯数字或 `JM序号` 下载整本。已存在的同名本地路径优先处理。运行时检测 Python 能否导入 jmcomic，也识别 uv／pipx 命令指向的独立 Python；找不到时只提示自行下载并安装，不提供安装命令或自动安装。特殊环境可设置 `BOOKFORGE_JM_PYTHON` 为已安装 jmcomic 的 Python 路径。仅下载源码目录还不够，所选 Python 必须能够导入它。
 - JM 静态图片由 jmcomic 解码后保存为 PNG；不支持 GIF 页，遇到时停止并报错。整本按章节及页码连续编号；默认书名来自下载结果（移除文件名不允许的字符），可用 `-o` 覆盖。使用内置下载设置，不读取 `JM_OPTION_PATH` 或执行用户配置插件；网络访问使用 jmcomic 默认客户端。下载失败或图片不完整时停止，临时图片自动清理。`--dry-run` 同样下载、校验并清理图片，只有 EPUB 不写入；`--delete` 对 JM 输入没有本地原文件可删除。可用 `--r2l`／`--l2r` 指定翻页方向。

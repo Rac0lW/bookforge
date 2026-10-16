@@ -37,6 +37,9 @@ enum Sort {
 struct Args {
     /// 图片目录、ZIP 压缩包、HTTP(S) 图片链接或 JM 序号
     directory: Option<PathBuf>,
+    /// 从 macOS 剪贴板读取输入（目录、ZIP、链接或 JM 序号）
+    #[arg(short, long, conflicts_with = "directory")]
+    paste: bool,
     #[command(subcommand)]
     command: Option<ConfigCommand>,
     /// 输出文件名或路径；与 --desktop 同用时只能是文件名
@@ -820,10 +823,13 @@ fn run() -> Result<()> {
     if let Some(command) = args.command {
         return config_command(&config_path()?, command);
     }
-    let directory_arg = args
-        .directory
-        .as_ref()
-        .ok_or("请指定图片目录、ZIP 压缩包、链接或 JM 序号")?;
+    let directory_arg = if args.paste {
+        clipboard_input()?
+    } else {
+        args.directory
+            .clone()
+            .ok_or("请指定图片目录、ZIP 压缩包、链接或 JM 序号")?
+    };
     let config = Config::load(&config_path()?)?;
     let books = (args.books || config.books) && !args.no_books;
     if books && !cfg!(target_os = "macos") {
@@ -989,10 +995,35 @@ fn run() -> Result<()> {
         if remote {
             println!("链接输入无本地原文件可删除；下载的临时文件会自动清理。");
         } else {
-            confirm_delete(directory_arg, &output)?;
+            confirm_delete(&directory_arg, &output)?;
         }
     }
     Ok(())
+}
+
+fn clipboard_input() -> Result<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return Err("--paste 仅支持 macOS".into());
+    }
+    let output = Command::new("pbpaste")
+        .output()
+        .map_err(|e| format!("无法读取剪贴板：{e}"))?;
+    if !output.status.success() {
+        return Err("无法读取剪贴板".into());
+    }
+    parse_clipboard(&String::from_utf8(output.stdout).map_err(|_| "剪贴板内容不是 UTF-8 文本")?)
+}
+
+fn parse_clipboard(text: &str) -> Result<PathBuf> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("剪贴板为空".into());
+    }
+    if text.contains(['\n', '\r']) {
+        return Err("剪贴板包含多行内容，只支持单个目录、ZIP、链接或 JM 序号".into());
+    }
+    println!("剪贴板输入：{text}");
+    Ok(text.into())
 }
 
 fn confirm_delete(source: &Path, output: &Path) -> Result<()> {
@@ -1076,6 +1107,14 @@ mod tests {
         assert!(!japanese_title("漫画"));
         assert!(!japanese_title("Comic"));
         assert!(Args::try_parse_from(["bookforge", "images", "--sort", "guess"]).is_err());
+        assert!(Args::try_parse_from(["bookforge", "-p"]).unwrap().paste);
+        assert!(Args::try_parse_from(["bookforge", "images", "--paste"]).is_err());
+        assert_eq!(
+            parse_clipboard("  https://example.org/a \n").unwrap(),
+            PathBuf::from("https://example.org/a")
+        );
+        assert!(parse_clipboard(" \n").is_err());
+        assert!(parse_clipboard("a\nb").is_err());
         assert!(Args::try_parse_from(["bookforge", "images", "-o"]).is_err());
         let desktop = Path::new("/test/Desktop");
         assert_eq!(

@@ -35,6 +35,7 @@ bookforge ./comic.zip -o ./books/comic.epub -d # ask y/n before deleting the sou
 bookforge 'https://example.org/album' -o ./books/album.epub
 bookforge 'https://18comic.vip/photo/1449263' -o ./books/chapter.epub
 bookforge 1449263 -o ./books/album.epub # also accepts JM1449263
+bookforge -p # macOS: read a folder, ZIP, link or JM ID from the clipboard
 
 # macOS: generate and attempt to import into Books
 bookforge ./comic.zip -o ./books/comic.epub --books
@@ -63,6 +64,7 @@ CLI help and status messages are currently in Chinese.
 - **Apple Books first:** EPUB 3 fixed layout, always one portrait page per image. Portrait images retain their dimensions; wide/square images are centered intact on a portrait 2:3 page. The first image is both the cover and the first content page. Defaults to right-to-left when the folder/ZIP title contains Japanese kana; use `--r2l` or `--l2r` to override (kanji-only titles are ambiguous and default to left-to-right).
 - **JPEG, PNG and static WebP:** extensions are case-insensitive. JPEG/PNG bytes are preserved; WebP is converted to PNG, preserving decoded pixels and transparency. Conversion may increase file size. Source files are never modified.
 - **Explicit failures:** animated WebP and damaged images are rejected rather than silently skipped. Empty image folders also fail.
+- **Clipboard input (macOS):** `-p` / `--paste` reads the clipboard via `pbpaste`, trims surrounding whitespace, prints what it read, and treats it like a normal input. It cannot be combined with an input argument. Empty, multi-line or non-UTF-8 clipboard text is rejected.
 - **Safe output:** existing files are never overwritten. Failed writes attempt to remove the incomplete output.
 - **Optional source deletion:** `-d` / `--delete` asks `[y/N]` after successful output. Only `y` (case-insensitive) deletes the original ZIP or the entire input directory and all its contents. Other answers, Enter, or EOF retain the source. Preview and failed output retain it too. If the EPUB is inside the source directory, that directory is retained to protect the book. URL inputs have no local source to delete. The desktop shortcut is now `-D` / `--desktop`.
 - **URL input:** HTTP(S) links are downloaded with `gallery-dl` into a temporary directory, cleaned up after use. On macOS interactive terminals, if missing, asks before running `brew install gallery-dl`; elsewhere or noninteractively, install it yourself. Unsupported sites or links without usable images fail. The default EPUB name uses the last URL path segment; use `-o` for a preferred name. `--dry-run` still downloads images, but does not write an EPUB.
